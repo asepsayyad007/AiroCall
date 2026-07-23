@@ -1,0 +1,162 @@
+:root {
+  --bg-main: #0c0508;
+  --bg-card: rgba(28, 12, 18, 0.85);
+  --bg-glass: rgba(255, 255, 255, 0.06);
+  --border-glass: rgba(255, 255, 255, 0.12);
+  --primary: #ff5500;
+  --primary-glow: rgba(255, 85, 0, 0.5);
+  --accent-red: #ff0044;
+  --accent-gold: #ffcc00;
+  --accent-emerald: #10b981;
+  --text-main: #ffffff;
+  --text-muted: #a3969d;
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-heading: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-image: 
+    radial-gradient(circle at 15% 15%, rgba(255, 0, 68, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(255, 170, 0, 0.15) 0%, transparent 50%);
+}
+
+h1, h2, h3, h4, .heading {
+  font-family: var(--font-heading);
+}
+
+/* Glassmorphism Panel */
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-glass);
+  border-radius: 20px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.glass-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-glass);
+  color: var(--text-main);
+  padding: 12px 20px;
+  border-radius: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+
+.glass-btn:active {
+  transform: scale(0.96);
+}
+
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.glass-btn-primary {
+  background: linear-gradient(135deg, #ff0044, #ff5500, #ffaa00);
+  border: none;
+  color: #ffffff;
+  box-shadow: 0 6px 20px rgba(255, 85, 0, 0.5);
+}
+
+.glass-btn-primary:hover {
+  background: linear-gradient(135deg, #e6003d, #e64d00, #e69900);
+  box-shadow: 0 8px 24px rgba(255, 85, 0, 0.7);
+}
+
+.glass-btn-danger {
+  background: rgba(244, 63, 94, 0.25);
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  color: #fda4af;
+}
+
+.glass-btn-danger:hover {
+  background: rgba(244, 63, 94, 0.4);
+  border-color: rgba(244, 63, 94, 0.7);
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.badge-hd {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-audio {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.04); opacity: 0.85; }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2.5s infinite ease-in-out;
+}
+
+/* Video Container & Camera Orientation Handling */
+.video-canvas-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  border-radius: 24px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify: content: center;
+}
+
+/* Dynamic Aspect Ratio for Portrait vs Landscape feeds */
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* Preserves exact aspect ratio for portrait & landscape orientation without distortion */
+  background: #000000;
+}
+
+/* Mobile Layout Responsive Breakpoints */
+@media (max-width: 768px) {
+  .glass-panel {
+    border-radius: 16px;
+  }
+  .pip-preview {
+    width: 110px !important;
+    height: 150px !important;
+    top: 80px !important;
+    right: 16px !important;
+  }
+}

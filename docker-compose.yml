@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  airocall:
+    build: .
+    container_name: airocall_app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    networks:
+      - ubuntu_default
+
+networks:
+  ubuntu_default:
+    external: true
