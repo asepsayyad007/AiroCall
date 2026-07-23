@@ -26,6 +26,7 @@ npm-debug.log*
 # Archives & artifacts
 *.tar.gz
 *.zip
+brain/
 
 # PM2
 .pm2/

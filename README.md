@@ -1,6 +1,6 @@
 # AiroCall
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
 
 Ultra-lightweight WebRTC video calling with built-in Smart TV streaming. Designed to run on minimal infrastructure (Oracle Free Tier VPS: 1 vCPU, 1 GB RAM, ~60 MB memory footprint).
 
@@ -169,4 +169,4 @@ The signaling server only relays SDP offers/answers and ICE candidates. All audi
 
 ## License
 
-[MIT](./LICENSE)
+[GPL v3](./LICENSE)
