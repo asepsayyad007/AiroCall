@@ -18,7 +18,7 @@ export default function Navbar({ currentMode, setMode }) {
   }, []);
 
   return (
-    <header style={{ position: 'sticky', top: 0, zIndex: 100, borderBottom: '1px solid var(--border-subtle)', background: 'rgba(10, 10, 15, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }}>
+    <header style={{ position: 'sticky', top: 0, zIndex: 100, borderBottom: '1px solid var(--glass-border)', background: 'rgba(12, 10, 18, 0.7)', backdropFilter: 'blur(16px) saturate(140%)', WebkitBackdropFilter: 'blur(16px) saturate(140%)' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
 
         {/* Brand — links to home */}

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Camera, CameraOff, Tv, Cast, PhoneOff, Link, Copy, Users, RefreshCw, AlertTriangle, SwitchCamera, Check, MoreVertical } from 'lucide-react';
+import { Mic, MicOff, Camera, CameraOff, Tv, Cast, PhoneOff, Link, Copy, Users, RefreshCw, AlertTriangle, SwitchCamera, Check, MoreVertical, Youtube, Square } from 'lucide-react';
 import TvPairModal from './TvPairModal';
+import WatchTogetherModal from './WatchTogetherModal';
+import YouTubePlayer from './YouTubePlayer';
 import { BandwidthEngine } from '../services/bandwidthEngine';
 import { getMediaStream } from '../services/mediaDevice';
 import { triggerPresentationCast } from '../services/presentationCast';
@@ -31,6 +33,11 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
   const [copiedLink, setCopiedLink] = useState(false);
   const [isDataSaver, setIsDataSaver] = useState(false);
   const [stats, setStats] = useState(null);
+  const [hasRemoteStream, setHasRemoteStream] = useState(false);
+  const [isWatchModalOpen, setIsWatchModalOpen] = useState(false);
+  const [watchVideoId, setWatchVideoId] = useState(null);
+  const [watchSyncState, setWatchSyncState] = useState(null);
+  const isWatchHost = useRef(false);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -143,6 +150,17 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
               }
             } else if (data.type === 'tv-code-generated') {
               setTvCode(data.code);
+            } else if (data.type === 'watch-sync') {
+              // Incoming Watch Together event from other participant
+              if (data.action === 'start' && data.videoId) {
+                setWatchVideoId(data.videoId);
+                isWatchHost.current = false;
+              } else if (data.action === 'stop') {
+                setWatchVideoId(null);
+                setWatchSyncState(null);
+              } else {
+                setWatchSyncState({ action: data.action, time: data.time });
+              }
             } else if (data.type === 'tv-connected') {
               setTvConnected(true);
               activeTvPeerIdRef.current = data.tvPeerId;
@@ -225,6 +243,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
 
     pc.ontrack = (event) => {
       setPeerConnected(true);
+      setHasRemoteStream(true);
       setConnectionState('connected');
 
       if (remoteVideoRef.current) {
@@ -471,6 +490,44 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     }
     setTvConnected(false);
     activeTvPeerIdRef.current = null;
+
+    // Generate a new TV code for next pairing (old one was consumed)
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'generate-tv-code', callId }));
+    }
+  };
+
+  // ─── Watch Together ───
+  const handleStartWatch = (videoId) => {
+    setWatchVideoId(videoId);
+    isWatchHost.current = true;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'watch-sync', callId,
+        payload: { action: 'start', videoId },
+      }));
+    }
+  };
+
+  const handleStopWatch = () => {
+    setWatchVideoId(null);
+    setWatchSyncState(null);
+    isWatchHost.current = false;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'watch-sync', callId,
+        payload: { action: 'stop' },
+      }));
+    }
+  };
+
+  const handleWatchSyncEvent = (event) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'watch-sync', callId,
+        payload: { action: event.action, time: event.time, videoId: watchVideoId },
+      }));
+    }
   };
 
   return (
@@ -559,13 +616,48 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
       )}
 
       {/* ─── Main Video Area ─── */}
-      <div style={{ position: 'relative', width: '100%', height: '100%', flex: 1, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ position: 'relative', width: '100%', height: '100%', flex: 1, background: '#000', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Remote Video */}
-        <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        {/* Watch Together: Split Layout */}
+        {watchVideoId ? (
+          <>
+            {/* YouTube Player — top 60% */}
+            <div style={{ flex: 3, position: 'relative', minHeight: 0 }}>
+              <YouTubePlayer
+                videoId={watchVideoId}
+                isHost={isWatchHost.current}
+                onSyncEvent={handleWatchSyncEvent}
+                syncState={watchSyncState}
+              />
+              {/* Stop button */}
+              <button
+                onClick={handleStopWatch}
+                style={{
+                  position: 'absolute', top: '10px', right: '10px', zIndex: 5,
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '6px 12px', fontSize: '0.72rem', fontWeight: 600,
+                  background: 'rgba(239, 68, 68, 0.85)', color: '#fff',
+                  border: 'none', borderRadius: 'var(--radius-full)', cursor: 'pointer',
+                  backdropFilter: 'blur(8px)',
+                }}
+              >
+                <Square size={12} /> Stop
+              </button>
+            </div>
+            {/* Remote Video — bottom 40% */}
+            <div style={{ flex: 2, position: 'relative', minHeight: 0, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            </div>
+          </>
+        ) : (
+          /* Normal: Full remote video */
+          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          </div>
+        )}
 
-        {/* Waiting for Peer Overlay */}
-        {!peerConnected && !callEndedByPeer && (
+        {/* Waiting for Peer Overlay — only show if truly no remote stream */}
+        {!peerConnected && !callEndedByPeer && !hasRemoteStream && (
           <div style={{
             position: 'absolute', inset: 0, zIndex: 4,
             background: 'var(--bg-overlay)', backdropFilter: 'blur(12px)',
@@ -666,16 +758,16 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
         </div>
       </div>
 
-      {/* ─── Bottom Toolbar (FaceTime-style frosted pill) ─── */}
+      {/* ─── Bottom Toolbar (iOS glass) ─── */}
       <div style={{
         position: 'absolute', bottom: '28px', left: '50%', transform: 'translateX(-50%)', zIndex: 50,
         display: 'flex', alignItems: 'center', gap: '14px',
-        padding: '14px 24px',
-        background: 'rgba(30, 30, 30, 0.75)',
-        backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        padding: '16px 28px',
+        background: 'rgba(20, 18, 28, 0.82)',
+        backdropFilter: 'blur(16px) saturate(140%)', WebkitBackdropFilter: 'blur(16px) saturate(140%)',
         borderRadius: 'var(--radius-full)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: 'var(--shadow-lg)',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
       }}>
 
           {/* Mic Toggle */}
@@ -718,6 +810,17 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             <Tv size={22} />
           </button>
 
+          {/* Watch Together */}
+          <button
+            onClick={() => watchVideoId ? handleStopWatch() : setIsWatchModalOpen(true)}
+            className={`btn-icon btn-icon-lg ${watchVideoId ? 'btn-icon-active' : ''}`}
+            aria-label="Watch Together"
+            title={watchVideoId ? 'Stop Watching' : 'Watch Together'}
+            style={watchVideoId ? { background: '#ef4444', borderColor: '#ef4444' } : {}}
+          >
+            <Youtube size={22} />
+          </button>
+
           {/* End Call */}
           <button
             onClick={handleEndCallClick}
@@ -740,6 +843,13 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
         remoteVideoRef={remoteVideoRef}
         pairCode={tvCode}
         onDisconnectTv={handleDisconnectTvClick}
+      />
+
+      {/* ─── Watch Together Modal ─── */}
+      <WatchTogetherModal
+        isOpen={isWatchModalOpen}
+        onClose={() => setIsWatchModalOpen(false)}
+        onStart={handleStartWatch}
       />
     </div>
   );

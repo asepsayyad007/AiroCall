@@ -441,8 +441,22 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'ping': {
-          // Keep-alive from TV receivers — just acknowledge
           safeSend(ws, { type: 'pong' });
+          break;
+        }
+
+        case 'watch-sync': {
+          // Relay Watch Together events (play, pause, seek, start, stop) to all in room
+          const roomClients = calls.get(targetCallId);
+          if (roomClients) {
+            broadcastToRoom(roomClients, ws, {
+              type: 'watch-sync',
+              action: payload.action,
+              videoId: payload.videoId,
+              time: payload.time,
+              senderId: ws.id,
+            });
+          }
           break;
         }
 

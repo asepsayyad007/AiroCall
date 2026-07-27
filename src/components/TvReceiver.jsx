@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Tv, Wifi, Volume2, PhoneOff, RefreshCw, AlertCircle } from 'lucide-react';
+import YouTubePlayer from './YouTubePlayer';
 
 const ICE_CONFIG = {
   iceServers: [
@@ -80,6 +81,8 @@ export default function TvReceiver({ initialCode, wsUrl }) {
 
   const [showHeader, setShowHeader] = useState(true);
   const hideTimeoutRef = useRef(null);
+  const [watchVideoId, setWatchVideoId] = useState(null);
+  const [watchSyncState, setWatchSyncState] = useState(null);
 
   const cleanupStreams = () => {
     streamsMapRef.current.clear();
@@ -223,8 +226,16 @@ export default function TvReceiver({ initialCode, wsUrl }) {
           cleanupStreams();
           if (pcRef.current) pcRef.current.close();
         } else if (data.type === 'peer-left') {
-          // A caller left but call might still be active — don't fully end, just clean streams
           cleanupStreams();
+        } else if (data.type === 'watch-sync') {
+          if (data.action === 'start' && data.videoId) {
+            setWatchVideoId(data.videoId);
+          } else if (data.action === 'stop') {
+            setWatchVideoId(null);
+            setWatchSyncState(null);
+          } else {
+            setWatchSyncState({ action: data.action, time: data.time });
+          }
         } else if (data.type === 'signal') {
           if (data.signalData.resetConnection) {
             if (pcRef.current) pcRef.current.close();
@@ -448,29 +459,60 @@ export default function TvReceiver({ initialCode, wsUrl }) {
         </div>
       </div>
 
-      {/* Video Grid */}
-      <div style={{
-        flex: 1, display: 'grid',
-        gridTemplateColumns: streamIds.length > 1 ? '1fr 1fr' : '1fr',
-        gridTemplateRows: '1fr',
-        gap: streamIds.length > 1 ? '2px' : '0',
-        background: '#000',
-        overflow: 'hidden',
-        minHeight: 0,
-      }}>
-        {streamIds.map((id) => (
-          <TvVideoPlayer key={id} stream={streamsMapRef.current.get(id)} />
-        ))}
-
-        {streamIds.length === 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
-            <div className="animate-fade-in" style={{ textAlign: 'center' }}>
-              <Wifi size={36} className="pulse-glow" style={{ marginBottom: '12px', opacity: 0.5 }} />
-              <p style={{ fontSize: '0.9rem' }}>Waiting for video stream...</p>
-            </div>
+      {/* Video Grid / Watch Together */}
+      {watchVideoId ? (
+        /* Watch Together: YouTube full-screen + floating video PiPs */
+        <div style={{ flex: 1, position: 'relative', background: '#000', overflow: 'hidden', minHeight: 0 }}>
+          {/* YouTube Full Screen */}
+          <YouTubePlayer
+            videoId={watchVideoId}
+            isHost={false}
+            onSyncEvent={() => {}}
+            syncState={watchSyncState}
+          />
+          {/* Floating Video PiPs — bottom right */}
+          <div style={{
+            position: 'absolute', bottom: '20px', right: '20px', zIndex: 10,
+            display: 'flex', gap: '8px',
+          }}>
+            {streamIds.map((id) => (
+              <div key={id} style={{
+                width: '160px', height: '120px',
+                borderRadius: '14px', overflow: 'hidden',
+                border: '2px solid rgba(255,255,255,0.2)',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                background: '#000',
+              }}>
+                <TvVideoPlayer stream={streamsMapRef.current.get(id)} />
+              </div>
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        /* Normal: Video Grid */
+        <div style={{
+          flex: 1, display: 'grid',
+          gridTemplateColumns: streamIds.length > 1 ? '1fr 1fr' : '1fr',
+          gridTemplateRows: '1fr',
+          gap: streamIds.length > 1 ? '2px' : '0',
+          background: '#000',
+          overflow: 'hidden',
+          minHeight: 0,
+        }}>
+          {streamIds.map((id) => (
+            <TvVideoPlayer key={id} stream={streamsMapRef.current.get(id)} />
+          ))}
+
+          {streamIds.length === 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
+              <div className="animate-fade-in" style={{ textAlign: 'center' }}>
+                <Wifi size={36} className="pulse-glow" style={{ marginBottom: '12px', opacity: 0.5 }} />
+                <p style={{ fontSize: '0.9rem' }}>Waiting for video stream...</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
