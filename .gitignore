@@ -1,6 +1,7 @@
 # Internal planning docs (do not publish)
 SECURITY-PLAN.md
 admin.html
+.kiro/
 
 # Dependencies
 node_modules/
