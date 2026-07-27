@@ -489,79 +489,7 @@ function broadcastToRoom(roomClients, sender, data) {
   });
 }
 
-// ─── ADMIN API (protected by Cloudflare Zero Trust at reverse proxy level) ───
-
-// Admin: Server overview
-app.get('/api/admin/status', (req, res) => {
-  const memoryUsage = process.memoryUsage();
-  res.json({
-    status: 'online',
-    version: '1.1.0',
-    environment: IS_PRODUCTION ? 'production' : 'development',
-    memory: {
-      rssMB: (memoryUsage.rss / 1024 / 1024).toFixed(2),
-      heapTotalMB: (memoryUsage.heapTotal / 1024 / 1024).toFixed(2),
-      heapUsedMB: (memoryUsage.heapUsed / 1024 / 1024).toFixed(2),
-      externalMB: (memoryUsage.external / 1024 / 1024).toFixed(2),
-    },
-    activeCalls: calls.size,
-    activeConnections: wss.clients.size,
-    activePairingCodes: tvPairings.size,
-    rateLimitEntries: rateLimitMap.size,
-    pinThrottleEntries: pinAttemptsMap.size,
-    uptimeSeconds: Math.floor(process.uptime()),
-    uptimeFormatted: formatUptime(process.uptime()),
-    serverTime: new Date().toISOString(),
-  });
-});
-
-// Admin: Active calls with connection details
-app.get('/api/admin/calls', (req, res) => {
-  const callsList = [];
-  for (const [callId, clients] of calls.entries()) {
-    const participants = Array.from(clients).map((c) => ({
-      peerId: c.id,
-      role: c.role,
-      ip: c._ip || 'unknown',
-      connectedAt: c.connectedAt ? new Date(c.connectedAt).toISOString() : null,
-      durationSeconds: c.connectedAt ? Math.floor((Date.now() - c.connectedAt) / 1000) : 0,
-    }));
-    callsList.push({ callId, participants, participantCount: participants.length });
-  }
-  res.json({ totalCalls: callsList.length, calls: callsList });
-});
-
-// Admin: Active WebSocket connections
-app.get('/api/admin/connections', (req, res) => {
-  const connections = [];
-  wss.clients.forEach((ws) => {
-    connections.push({
-      peerId: ws.id,
-      role: ws.role,
-      callId: ws.callId || null,
-      ip: ws._ip || 'unknown',
-      connectedAt: ws.connectedAt ? new Date(ws.connectedAt).toISOString() : null,
-      isAlive: ws.isAlive,
-      pairedWithCaller: ws.pairedWithCallerId || null,
-    });
-  });
-  res.json({ totalConnections: connections.length, connections });
-});
-
-// Admin: Rate limit & throttle status
-app.get('/api/admin/security', (req, res) => {
-  const rateLimits = [];
-  for (const [ip, entry] of rateLimitMap.entries()) {
-    rateLimits.push({ ip, count: entry.count, resetsAt: new Date(entry.resetTime).toISOString() });
-  }
-  const pinThrottles = [];
-  for (const [ip, entry] of pinAttemptsMap.entries()) {
-    pinThrottles.push({ ip, attempts: entry.attempts, blockedUntil: new Date(entry.blockedUntil).toISOString() });
-  }
-  res.json({ rateLimits, pinThrottles });
-});
-
-// Admin: Server access log (last 100 entries, in-memory)
+// ─── Access Logging (internal) ───
 const accessLog = [];
 const MAX_LOG_ENTRIES = 200;
 
@@ -576,18 +504,6 @@ function logAccess(action, details) {
   }
 }
 
-app.get('/api/admin/logs', (req, res) => {
-  const limit = parseInt(req.query.limit) || 50;
-  res.json({ total: accessLog.length, logs: accessLog.slice(-limit).reverse() });
-});
-
-function formatUptime(seconds) {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${d}d ${h}h ${m}m`;
-}
-
 // ─── Static file serving (production) ───
 if (IS_PRODUCTION) {
   app.use(express.static(path.join(__dirname, 'dist'), {
@@ -595,17 +511,7 @@ if (IS_PRODUCTION) {
     immutable: true,
     etag: true,
   }));
-
-  // Admin dashboard — served on admin subdomain or /admin path
-  app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'admin.html'));
-  });
-
   app.get('*', (req, res) => {
-    // If request is to admin subdomain, serve admin page
-    if (req.hostname && req.hostname.startsWith('admin.')) {
-      return res.sendFile(path.join(__dirname, 'admin.html'));
-    }
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });

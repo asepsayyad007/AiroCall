@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   airocall:
     build: .
@@ -10,9 +8,3 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-    networks:
-      - ubuntu_default
-
-networks:
-  ubuntu_default:
-    external: true
