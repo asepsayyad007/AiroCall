@@ -14,6 +14,7 @@ const ICE_CONFIG = {
 
 function TvVideoPlayer({ stream }) {
   const videoRef = useRef(null);
+  const [isPortrait, setIsPortrait] = useState(false);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -25,16 +26,40 @@ function TvVideoPlayer({ stream }) {
           videoRef.current.play().catch((err) => console.error('Muted autoplay also blocked:', err));
         }
       });
+
+      // Detect orientation on metadata load
+      const handleMetadata = () => {
+        if (videoRef.current) {
+          const vw = videoRef.current.videoWidth;
+          const vh = videoRef.current.videoHeight;
+          if (vw && vh) setIsPortrait(vh > vw);
+        }
+      };
+      videoRef.current.addEventListener('loadedmetadata', handleMetadata);
+      // Also check on resize events (camera switch changes dimensions)
+      videoRef.current.addEventListener('resize', handleMetadata);
+
+      return () => {
+        if (videoRef.current) {
+          videoRef.current.removeEventListener('loadedmetadata', handleMetadata);
+          videoRef.current.removeEventListener('resize', handleMetadata);
+        }
+      };
     }
   }, [stream]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        style={{
+          width: '100%',
+          height: '100%',
+          /* Portrait streams: contain to avoid cropping. Landscape: cover to fill TV. */
+          objectFit: isPortrait ? 'contain' : 'cover',
+        }}
       />
     </div>
   );

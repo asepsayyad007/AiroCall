@@ -10,10 +10,24 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1kb' })); // Limit payload size
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  maxPayload: 64 * 1024, // 64 KB max message size (SDP can be large)
+  perMessageDeflate: false, // Disable compression to save CPU on 1-vCPU VPS
+});
 
 // In-Memory State
 const calls = new Map(); // callId -> Set<wsClient>
@@ -31,45 +45,72 @@ function generatePairingCode() {
   return code;
 }
 
+// ─── Heartbeat: detect dead connections every 25s ───
+const HEARTBEAT_INTERVAL = 25000;
+const heartbeatTimer = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (!ws.isAlive) {
+      ws.terminate();
+      return;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, HEARTBEAT_INTERVAL);
+
 // Clean up stale pairing codes (> 10 mins)
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [code, data] of tvPairings.entries()) {
     if (now - data.createdAt > 10 * 60 * 1000) {
       tvPairings.delete(code);
     }
   }
+  // Also clean up empty call rooms
+  for (const [callId, clients] of calls.entries()) {
+    if (clients.size === 0) {
+      calls.delete(callId);
+    }
+  }
 }, 30000);
 
-// API Health Check
+// ─── API Health Check ───
 app.get('/api/health', (req, res) => {
   const memoryUsage = process.memoryUsage();
   res.json({
     status: 'online',
-    vpsSpecs: '1 vCPU | 1 GB RAM (Oracle Always Free)',
+    version: '1.1.0',
     memory: {
       rssMB: (memoryUsage.rss / 1024 / 1024).toFixed(2),
-      heapTotalMB: (memoryUsage.heapTotal / 1024 / 1024).toFixed(2),
       heapUsedMB: (memoryUsage.heapUsed / 1024 / 1024).toFixed(2),
     },
     activeCalls: calls.size,
+    activeConnections: wss.clients.size,
     uptimeSeconds: Math.floor(process.uptime()),
   });
 });
 
-// WebSocket Signaling Handler
-wss.on('connection', (ws) => {
+// ─── WebSocket Signaling Handler ───
+wss.on('connection', (ws, req) => {
   ws.id = Math.random().toString(36).substring(2, 10);
   ws.isAlive = true;
   ws.role = 'caller';
+  ws.connectedAt = Date.now();
 
   ws.on('pong', () => {
     ws.isAlive = true;
   });
 
+  ws.on('error', (err) => {
+    console.warn(`WS error [${ws.id}]:`, err.message);
+  });
+
   ws.on('message', (rawData) => {
     try {
-      const message = JSON.parse(rawData.toString());
+      const str = rawData.toString();
+      if (str.length > 65536) return; // Drop oversized messages
+
+      const message = JSON.parse(str);
       const { type, callId, payload } = message;
       const targetCallId = callId || payload?.callId || ws.callId;
 
@@ -82,13 +123,11 @@ wss.on('connection', (ws) => {
           roomClients.add(ws);
           calls.set(newCallId, roomClients);
 
-          ws.send(
-            JSON.stringify({
-              type: 'call-started',
-              callId: newCallId,
-              peerId: ws.id,
-            })
-          );
+          safeSend(ws, {
+            type: 'call-started',
+            callId: newCallId,
+            peerId: ws.id,
+          });
           break;
         }
 
@@ -103,7 +142,7 @@ wss.on('connection', (ws) => {
           const activeCallersCount = Array.from(roomClients).filter((c) => c.role === 'caller').length;
 
           if (activeCallersCount >= 2 && ws.role === 'caller') {
-            ws.send(JSON.stringify({ type: 'call-error', message: 'Call is full (2 participants max)' }));
+            safeSend(ws, { type: 'call-error', message: 'Call is full (2 participants max)' });
             return;
           }
 
@@ -115,25 +154,17 @@ wss.on('connection', (ws) => {
             .filter((c) => c.id !== ws.id)
             .map((c) => ({ id: c.id, role: c.role }));
 
-          ws.send(
-            JSON.stringify({
-              type: 'call-joined',
-              callId: targetCallId,
-              peerId: ws.id,
-              existingPeers,
-            })
-          );
+          safeSend(ws, {
+            type: 'call-joined',
+            callId: targetCallId,
+            peerId: ws.id,
+            existingPeers,
+          });
 
-          roomClients.forEach((client) => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(
-                JSON.stringify({
-                  type: 'peer-joined',
-                  peerId: ws.id,
-                  role: ws.role,
-                })
-              );
-            }
+          broadcastToRoom(roomClients, ws, {
+            type: 'peer-joined',
+            peerId: ws.id,
+            role: ws.role,
           });
           break;
         }
@@ -141,16 +172,10 @@ wss.on('connection', (ws) => {
         case 'peer-ready': {
           const roomClients = calls.get(targetCallId);
           if (roomClients) {
-            roomClients.forEach((client) => {
-              if (client !== ws && client.readyState === WebSocket.OPEN) {
-                client.send(
-                  JSON.stringify({
-                    type: 'peer-ready-to-negotiate',
-                    peerId: ws.id,
-                    role: ws.role,
-                  })
-                );
-              }
+            broadcastToRoom(roomClients, ws, {
+              type: 'peer-ready-to-negotiate',
+              peerId: ws.id,
+              role: ws.role,
             });
           }
           break;
@@ -159,54 +184,37 @@ wss.on('connection', (ws) => {
         case 'end-call': {
           const roomClients = calls.get(targetCallId);
           if (roomClients) {
-            // Broadcast call-ended to ALL clients in room including TV receivers
+            const msg = { type: 'call-ended', byPeerId: ws.id };
             roomClients.forEach((client) => {
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(
-                  JSON.stringify({
-                    type: 'call-ended',
-                    byPeerId: ws.id,
-                  })
-                );
-              }
+              safeSend(client, msg);
             });
             calls.delete(targetCallId);
           }
           break;
         }
 
-        // TV sends this after pairing to ask caller to re-send offer with live remote stream
         case 'tv-request-stream': {
           const roomClients = calls.get(targetCallId);
           if (roomClients) {
             roomClients.forEach((client) => {
-              if (client.readyState === WebSocket.OPEN && client.role === 'caller' && client.id !== ws.id) {
-                client.send(
-                  JSON.stringify({
-                    type: 'tv-request-stream',
-                    tvPeerId: ws.id,
-                    callId: targetCallId,
-                  })
-                );
+              if (client.readyState === WebSocket.OPEN && client.role === 'caller' && client.id === ws.pairedWithCallerId) {
+                safeSend(client, {
+                  type: 'tv-request-stream',
+                  tvPeerId: ws.id,
+                  callId: targetCallId,
+                });
               }
             });
           }
           break;
         }
 
-        // Caller disconnects TV stream
         case 'tv-disconnect': {
           const roomClients = calls.get(targetCallId);
           if (roomClients) {
             roomClients.forEach((client) => {
-              if (client.readyState === WebSocket.OPEN && client.role === 'tv') {
-                client.send(
-                  JSON.stringify({
-                    type: 'tv-disconnected',
-                    callId: targetCallId,
-                  })
-                );
-                // Clean up TV client socket reference from room list
+              if (client.readyState === WebSocket.OPEN && client.role === 'tv' && client.pairedWithCallerId === ws.id) {
+                safeSend(client, { type: 'tv-disconnected', callId: targetCallId });
                 roomClients.delete(client);
               }
             });
@@ -221,7 +229,7 @@ wss.on('connection', (ws) => {
             requesterId: ws.id,
             createdAt: Date.now(),
           });
-          ws.send(JSON.stringify({ type: 'tv-code-generated', code, callId: targetCallId }));
+          safeSend(ws, { type: 'tv-code-generated', code, callId: targetCallId });
           break;
         }
 
@@ -230,59 +238,60 @@ wss.on('connection', (ws) => {
           const pairing = tvPairings.get(code);
 
           if (!pairing) {
-            ws.send(JSON.stringify({ type: 'tv-pair-error', message: 'Invalid or expired TV PIN code' }));
+            safeSend(ws, { type: 'tv-pair-error', message: 'Invalid or expired TV PIN code' });
             return;
           }
 
           ws.role = 'tv';
           ws.callId = pairing.callId;
+          ws.pairedWithCallerId = pairing.requesterId;
           let roomClients = calls.get(pairing.callId);
 
           if (!roomClients) {
-            ws.send(JSON.stringify({ type: 'tv-pair-error', message: 'Call is no longer active' }));
+            safeSend(ws, { type: 'tv-pair-error', message: 'Call is no longer active' });
             return;
           }
 
           roomClients.add(ws);
 
-          ws.send(
-            JSON.stringify({
-              type: 'tv-pair-success',
-              callId: pairing.callId,
-              code,
-            })
-          );
+          safeSend(ws, {
+            type: 'tv-pair-success',
+            callId: pairing.callId,
+            code,
+          });
 
-          // Send tv-connected ONLY to the specific caller who requested the TV pair code!
+          // Notify only the paired caller
           roomClients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN && client.id === pairing.requesterId) {
-              client.send(
-                JSON.stringify({
-                  type: 'tv-connected',
-                  tvPeerId: ws.id,
-                  code,
-                })
-              );
+              safeSend(client, {
+                type: 'tv-connected',
+                tvPeerId: ws.id,
+                code,
+              });
             }
           });
+
+          // Consume the pairing code so it can't be reused
+          tvPairings.delete(code);
           break;
         }
 
         case 'signal': {
           const { targetPeerId, signalData } = payload;
+          if (!signalData) return; // Guard against malformed signals
+
           const roomClients = calls.get(targetCallId);
           if (roomClients) {
+            const msg = {
+              type: 'signal',
+              senderPeerId: ws.id,
+              callId: targetCallId,
+              signalData,
+            };
             roomClients.forEach((client) => {
               if (client.readyState === WebSocket.OPEN && client !== ws) {
                 if (targetPeerId === 'broadcast' || client.id === targetPeerId) {
-                  client.send(
-                    JSON.stringify({
-                      type: 'signal',
-                      senderPeerId: ws.id,
-                      callId: targetCallId,
-                      signalData,
-                    })
-                  );
+                  safeSend(client, msg);
                 }
               }
             });
@@ -291,10 +300,11 @@ wss.on('connection', (ws) => {
         }
 
         default:
-          console.log('Unknown message type:', type);
+          break; // Silently ignore unknown types
       }
     } catch (err) {
-      console.error('WebSocket Error:', err);
+      // Malformed JSON or processing error — don't crash
+      console.warn(`Message error [${ws.id}]:`, err.message);
     }
   });
 
@@ -306,29 +316,77 @@ wss.on('connection', (ws) => {
       if (roomClients.size === 0) {
         calls.delete(ws.callId);
       } else {
-        roomClients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(
-              JSON.stringify({
-                type: 'peer-left',
-                peerId: ws.id,
-                role: ws.role,
-              })
-            );
-          }
+        broadcastToRoom(roomClients, ws, {
+          type: 'peer-left',
+          peerId: ws.id,
+          role: ws.role,
         });
       }
     }
   });
 });
 
+// ─── Helper: safe send with error handling ───
+function safeSend(ws, data) {
+  if (ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify(data));
+    } catch (e) {
+      // Socket closed between check and send — safe to ignore
+    }
+  }
+}
+
+// ─── Helper: broadcast to room excluding sender ───
+function broadcastToRoom(roomClients, sender, data) {
+  roomClients.forEach((client) => {
+    if (client !== sender && client.readyState === WebSocket.OPEN) {
+      safeSend(client, data);
+    }
+  });
+}
+
+// ─── Static file serving (production) ───
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'dist')));
+  // Cache static assets aggressively (they have content hashes)
+  app.use(express.static(path.join(__dirname, 'dist'), {
+    maxAge: '30d',
+    immutable: true,
+    etag: true,
+  }));
+  // SPA fallback — no cache on HTML (so deploys take effect immediately)
   app.get('*', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 }
 
+// ─── Graceful Shutdown ───
+function shutdown(signal) {
+  console.log(`\n${signal} received. Shutting down gracefully...`);
+  clearInterval(heartbeatTimer);
+  clearInterval(cleanupTimer);
+
+  // Close all WebSocket connections
+  wss.clients.forEach((ws) => {
+    ws.close(1001, 'Server shutting down');
+  });
+
+  wss.close(() => {
+    server.close(() => {
+      console.log('Server closed.');
+      process.exit(0);
+    });
+  });
+
+  // Force exit after 5s if graceful fails
+  setTimeout(() => process.exit(1), 5000);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// ─── Start ───
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 AiroCall Server running on http://localhost:${PORT}`);

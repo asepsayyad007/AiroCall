@@ -5,10 +5,12 @@ import VideoCall from './components/VideoCall';
 import TvReceiver from './components/TvReceiver';
 
 export default function App() {
-  const [mode, setMode] = useState('caller'); // 'caller' | 'tv'
+  const [mode, setMode] = useState('caller');
   const [activeCallId, setActiveCallId] = useState(null);
   const [userName, setUserName] = useState('User');
   const wsRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
 
   const urlParams = new URLSearchParams(window.location.search);
   const codeParam = urlParams.get('code');
@@ -25,23 +27,46 @@ export default function App() {
       return;
     }
 
-    const socket = new WebSocket(wsUrl);
-    wsRef.current = socket;
+    function connect() {
+      const socket = new WebSocket(wsUrl);
+      wsRef.current = socket;
 
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'call-started' || data.type === 'call-joined') {
-          setActiveCallId(data.callId);
+      socket.onopen = () => {
+        reconnectAttemptsRef.current = 0;
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'call-started' || data.type === 'call-joined') {
+            setActiveCallId(data.callId);
+          }
+        } catch (e) {
+          // Malformed message — ignore
         }
-      } catch (e) {
-        console.error(e);
-      }
-    };
+      };
+
+      socket.onclose = (event) => {
+        // Don't reconnect if close was intentional
+        if (event.code === 1000) return;
+
+        // Exponential backoff reconnection
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+        reconnectAttemptsRef.current++;
+        reconnectTimerRef.current = setTimeout(connect, delay);
+      };
+
+      socket.onerror = () => {
+        // Will trigger onclose
+      };
+    }
+
+    connect();
 
     return () => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.close();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close(1000);
       }
     };
   }, [wsUrl, isTvRoute]);
@@ -78,12 +103,9 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      
-      {/* Top Header Navbar */}
       <Navbar currentMode={mode} setMode={setMode} />
 
-      {/* Main View Router */}
-      <main style={{ flex: 1, paddingBottom: '40px' }}>
+      <main style={{ flex: 1 }}>
         {mode === 'caller' && (
           !activeCallId ? (
             <Lobby
@@ -103,7 +125,6 @@ export default function App() {
 
         {mode === 'tv' && <TvReceiver initialCode={codeParam} wsUrl={wsUrl} />}
       </main>
-
     </div>
   );
 }

@@ -315,11 +315,21 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
       localVideoRef.current.srcObject = stream;
     }
 
+    // Replace track on the caller-to-caller peer connection
     if (pcRef.current) {
       const newVideoTrack = stream.getVideoTracks()[0];
       const videoSender = pcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
       if (videoSender && newVideoTrack) {
-        videoSender.replaceTrack(newVideoTrack);
+        await videoSender.replaceTrack(newVideoTrack);
+      }
+    }
+
+    // Also replace track on the caller-to-TV peer connection to prevent TV stream from freezing
+    if (tvPcRef.current && activeTvPeerIdRef.current) {
+      const newVideoTrack = stream.getVideoTracks()[0];
+      const tvVideoSender = tvPcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
+      if (tvVideoSender && newVideoTrack) {
+        await tvVideoSender.replaceTrack(newVideoTrack);
       }
     }
   };
