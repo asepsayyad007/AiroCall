@@ -10,56 +10,52 @@ const ICE_CONFIG = {
     { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:global.stun.twilio.com:3478' },
   ],
+  iceCandidatePoolSize: 4,
 };
 
 function TvVideoPlayer({ stream }) {
   const videoRef = useRef(null);
-  const [isPortrait, setIsPortrait] = useState(false);
 
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
+      videoRef.current.muted = false;
       videoRef.current.play().catch((e) => {
-        console.warn('TV Autoplay blocked, retrying muted:', e);
         if (videoRef.current) {
           videoRef.current.muted = true;
-          videoRef.current.play().catch((err) => console.error('Muted autoplay also blocked:', err));
+          videoRef.current.play().then(() => {
+            setTimeout(() => {
+              if (videoRef.current) videoRef.current.muted = false;
+            }, 500);
+          }).catch(() => {});
         }
       });
-
-      // Detect orientation on metadata load
-      const handleMetadata = () => {
-        if (videoRef.current) {
-          const vw = videoRef.current.videoWidth;
-          const vh = videoRef.current.videoHeight;
-          if (vw && vh) setIsPortrait(vh > vw);
-        }
-      };
-      videoRef.current.addEventListener('loadedmetadata', handleMetadata);
-      // Also check on resize events (camera switch changes dimensions)
-      videoRef.current.addEventListener('resize', handleMetadata);
-
-      return () => {
-        if (videoRef.current) {
-          videoRef.current.removeEventListener('loadedmetadata', handleMetadata);
-          videoRef.current.removeEventListener('resize', handleMetadata);
-        }
-      };
     }
   }, [stream]);
 
+  useEffect(() => {
+    const unmute = () => {
+      if (videoRef.current && videoRef.current.muted) {
+        videoRef.current.muted = false;
+      }
+    };
+    window.addEventListener('click', unmute, { once: true });
+    window.addEventListener('touchstart', unmute, { once: true });
+    window.addEventListener('keydown', unmute, { once: true });
+    return () => {
+      window.removeEventListener('click', unmute);
+      window.removeEventListener('touchstart', unmute);
+      window.removeEventListener('keydown', unmute);
+    };
+  }, []);
+
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 0, background: '#000', overflow: 'hidden' }}>
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        style={{
-          width: '100%',
-          height: '100%',
-          /* Portrait streams: contain to avoid cropping. Landscape: cover to fill TV. */
-          objectFit: isPortrait ? 'contain' : 'cover',
-        }}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }}
       />
     </div>
   );
@@ -72,8 +68,12 @@ export default function TvReceiver({ initialCode, wsUrl }) {
   const [activeCallId, setActiveCallId] = useState(null);
   const activeCallIdRef = useRef(null);
   const [isCallEnded, setIsCallEnded] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const pcRef = useRef(null);
   const wsRef = useRef(null);
+  const keepAliveRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const pairedCodeRef = useRef(null);
 
   const [streamIds, setStreamIds] = useState([]);
   const streamsMapRef = useRef(new Map());
@@ -91,6 +91,18 @@ export default function TvReceiver({ initialCode, wsUrl }) {
     if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
     hideTimeoutRef.current = setTimeout(() => setShowHeader(false), 4000);
   };
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (pcRef.current) pcRef.current.close();
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close(1000);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (status === 'connected') {
@@ -112,9 +124,49 @@ export default function TvReceiver({ initialCode, wsUrl }) {
   useEffect(() => {
     if (initialCode) {
       setPinCode(initialCode);
+      pairedCodeRef.current = initialCode;
       handlePair(initialCode);
     }
   }, [initialCode]);
+
+  // ─── WebSocket keep-alive: ping every 20s to prevent server timeout ───
+  const startKeepAlive = (socket) => {
+    if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+    keepAliveRef.current = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 20000);
+  };
+
+  const stopKeepAlive = () => {
+    if (keepAliveRef.current) {
+      clearInterval(keepAliveRef.current);
+      keepAliveRef.current = null;
+    }
+  };
+
+  // ─── Auto-retry: reconnect TV stream when WebSocket/peer drops ───
+  const attemptReconnect = () => {
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    setReconnecting(true);
+    reconnectTimerRef.current = setTimeout(() => {
+      const callId = activeCallIdRef.current;
+      if (callId && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        // Re-request stream from caller
+        cleanupStreams();
+        if (pcRef.current) pcRef.current.close();
+        setupWebRTC(wsRef.current, callId);
+        wsRef.current.send(JSON.stringify({ type: 'tv-request-stream', callId }));
+        setReconnecting(false);
+      } else {
+        // WebSocket is dead — full reconnect
+        setReconnecting(false);
+        setStatus('idle');
+        setErrorMsg('Connection lost. Please re-enter the PIN.');
+      }
+    }, 2000);
+  };
 
   const handlePair = (codeToUse) => {
     const targetCode = codeToUse || pinCode;
@@ -123,16 +175,25 @@ export default function TvReceiver({ initialCode, wsUrl }) {
       return;
     }
 
+    pairedCodeRef.current = targetCode;
     setStatus('pairing');
     setErrorMsg('');
     setIsCallEnded(false);
+    setReconnecting(false);
     cleanupStreams();
+    stopKeepAlive();
+
+    // Close existing WS if any
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.close(1000);
+    }
 
     const socket = new WebSocket(wsUrl);
     wsRef.current = socket;
 
     socket.onopen = () => {
       socket.send(JSON.stringify({ type: 'verify-tv-code', payload: { code: targetCode } }));
+      startKeepAlive(socket);
     };
 
     socket.onmessage = async (event) => {
@@ -144,18 +205,25 @@ export default function TvReceiver({ initialCode, wsUrl }) {
           activeCallIdRef.current = currentCallId;
           setActiveCallId(currentCallId);
           setStatus('connected');
+          setReconnecting(false);
           setupWebRTC(socket, currentCallId);
           socket.send(JSON.stringify({ type: 'tv-request-stream', callId: currentCallId }));
         } else if (data.type === 'tv-disconnected') {
           if (pcRef.current) pcRef.current.close();
           cleanupStreams();
+          stopKeepAlive();
           setStatus('idle');
-          setErrorMsg('Casting session disconnected.');
+          setErrorMsg('Casting session disconnected by caller.');
         } else if (data.type === 'tv-pair-error') {
           setStatus('error');
           setErrorMsg(data.message || 'Invalid PIN code');
-        } else if (data.type === 'call-ended' || data.type === 'peer-left') {
+        } else if (data.type === 'call-ended') {
+          stopKeepAlive();
           setIsCallEnded(true);
+          cleanupStreams();
+          if (pcRef.current) pcRef.current.close();
+        } else if (data.type === 'peer-left') {
+          // A caller left but call might still be active — don't fully end, just clean streams
           cleanupStreams();
         } else if (data.type === 'signal') {
           if (data.signalData.resetConnection) {
@@ -183,8 +251,21 @@ export default function TvReceiver({ initialCode, wsUrl }) {
             }
           }
         }
+        // Ignore 'pong' or unknown types silently
       } catch (err) {
         console.error('TV Receiver error:', err);
+      }
+    };
+
+    socket.onclose = (event) => {
+      stopKeepAlive();
+      // If we were connected and it wasn't intentional, try to reconnect
+      if (status === 'connected' && event.code !== 1000 && !isCallEnded) {
+        setReconnecting(true);
+        // Attempt to re-establish full connection after 3s
+        reconnectTimerRef.current = setTimeout(() => {
+          handlePair(pairedCodeRef.current);
+        }, 3000);
       }
     };
 
@@ -209,7 +290,7 @@ export default function TvReceiver({ initialCode, wsUrl }) {
     };
 
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && socket.readyState === WebSocket.OPEN) {
         socket.send(
           JSON.stringify({
             type: 'signal',
@@ -217,6 +298,19 @@ export default function TvReceiver({ initialCode, wsUrl }) {
             payload: { targetPeerId: 'broadcast', signalData: { candidate: event.candidate } },
           })
         );
+      }
+    };
+
+    // Auto-retry when peer connection fails
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        attemptReconnect();
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed') {
+        attemptReconnect();
       }
     };
   };
@@ -228,7 +322,6 @@ export default function TvReceiver({ initialCode, wsUrl }) {
         <div className="animate-fade-in-scale" style={{ width: '100%', maxWidth: '400px' }}>
           <div className="glass-panel" style={{ padding: '40px 32px', textAlign: 'center' }}>
 
-            {/* Icon */}
             <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '72px', height: '72px', borderRadius: '20px', background: 'var(--brand-primary-muted)', marginBottom: '20px' }}>
               <Tv size={32} color="var(--brand-primary)" />
             </div>
@@ -238,7 +331,6 @@ export default function TvReceiver({ initialCode, wsUrl }) {
               Enter the 6-digit PIN shown on the caller's screen.
             </p>
 
-            {/* Error Message */}
             {errorMsg && (
               <div className="animate-fade-in" style={{ background: 'var(--color-danger-muted)', border: '1px solid rgba(239,68,68,0.25)', padding: '10px 14px', borderRadius: 'var(--radius-md)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#fca5a5' }}>
                 <AlertCircle size={16} />
@@ -246,7 +338,6 @@ export default function TvReceiver({ initialCode, wsUrl }) {
               </div>
             )}
 
-            {/* PIN Input */}
             <div style={{ marginBottom: '20px' }}>
               <input
                 type="text"
@@ -262,7 +353,6 @@ export default function TvReceiver({ initialCode, wsUrl }) {
               />
             </div>
 
-            {/* Connect Button */}
             <button
               onClick={() => handlePair()}
               className="glass-btn glass-btn-primary"
@@ -270,13 +360,9 @@ export default function TvReceiver({ initialCode, wsUrl }) {
               style={{ width: '100%', padding: '14px', fontSize: '0.95rem', fontWeight: 600, borderRadius: 'var(--radius-lg)', opacity: status === 'pairing' ? 0.7 : 1 }}
             >
               {status === 'pairing' ? (
-                <>
-                  <RefreshCw size={18} className="pulse-glow" /> Connecting...
-                </>
+                <><RefreshCw size={18} className="pulse-glow" /> Connecting...</>
               ) : (
-                <>
-                  <Wifi size={18} /> Connect to Call
-                </>
+                <><Wifi size={18} /> Connect to Call</>
               )}
             </button>
 
@@ -304,16 +390,29 @@ export default function TvReceiver({ initialCode, wsUrl }) {
             </div>
             <h2 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '8px' }}>Call Ended</h2>
             <p style={{ fontSize: '1rem', color: 'var(--text-secondary)', maxWidth: '380px', marginBottom: '28px' }}>
-              The video call stream has disconnected. Enter a new PIN to pair again.
+              The video call has ended.
             </p>
             <button
-              onClick={() => { setStatus('idle'); setIsCallEnded(false); }}
+              onClick={() => { setStatus('idle'); setIsCallEnded(false); stopKeepAlive(); }}
               className="glass-btn glass-btn-primary"
               style={{ padding: '14px 28px', fontSize: '1rem', borderRadius: 'var(--radius-lg)' }}
             >
               <RefreshCw size={18} /> New PIN
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Reconnecting Banner */}
+      {reconnecting && !isCallEnded && (
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 90,
+          background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)',
+          padding: '20px 32px', borderRadius: 'var(--radius-lg)', textAlign: 'center',
+          border: '1px solid var(--border-subtle)',
+        }}>
+          <RefreshCw size={24} className="pulse-glow" style={{ marginBottom: '8px' }} />
+          <p style={{ fontSize: '0.9rem', fontWeight: 500 }}>Reconnecting stream...</p>
         </div>
       )}
 
@@ -344,7 +443,7 @@ export default function TvReceiver({ initialCode, wsUrl }) {
             LIVE
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            <Volume2 size={14} /> Audio Active
+            <Volume2 size={14} /> Audio
           </div>
         </div>
       </div>
@@ -353,15 +452,16 @@ export default function TvReceiver({ initialCode, wsUrl }) {
       <div style={{
         flex: 1, display: 'grid',
         gridTemplateColumns: streamIds.length > 1 ? '1fr 1fr' : '1fr',
-        gap: streamIds.length > 1 ? '4px' : '0',
-        padding: streamIds.length > 1 ? '4px' : '0',
+        gridTemplateRows: '1fr',
+        gap: streamIds.length > 1 ? '2px' : '0',
         background: '#000',
+        overflow: 'hidden',
+        minHeight: 0,
       }}>
         {streamIds.map((id) => (
           <TvVideoPlayer key={id} stream={streamsMapRef.current.get(id)} />
         ))}
 
-        {/* Fallback if no streams yet */}
         {streamIds.length === 0 && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
             <div className="animate-fade-in" style={{ textAlign: 'center' }}>

@@ -14,6 +14,7 @@ const ICE_CONFIG = {
     { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:global.stun.twilio.com:3478' },
   ],
+  iceCandidatePoolSize: 4, // Pre-gather ICE candidates for faster connection
 };
 
 export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeaveCall }) {
@@ -39,6 +40,8 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
   const bwEngineRef = useRef(null);
   const localStreamRef = useRef(null);
   const timerRef = useRef(null);
+  const pipRef = useRef(null);
+  const pipDragRef = useRef({ dragging: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0 });
 
   // Call Timer Counter
   useEffect(() => {
@@ -53,6 +56,16 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [peerConnected]);
+
+  // Mute mobile speaker when TV is connected (audio plays from TV instead)
+  // This prevents echo: TV speaker audio won't be picked up by mobile mic
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.muted = tvConnected;
+      // Also set volume to 0 as double protection against audio leaking
+      remoteVideoRef.current.volume = tvConnected ? 0 : 1;
+    }
+  }, [tvConnected]);
 
   const formatTimer = (seconds) => {
     const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -193,7 +206,22 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     const pc = new RTCPeerConnection(ICE_CONFIG);
     pcRef.current = pc;
 
-    localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+    localStream.getTracks().forEach((track) => {
+      const sender = pc.addTrack(track, localStream);
+      // Set encoding priority for low latency
+      if (track.kind === 'video') {
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].priority = 'high';
+          params.encodings[0].networkPriority = 'high';
+          params.degradationPreference = 'maintain-framerate';
+          sender.setParameters(params).catch(() => {});
+        } catch (e) {}
+      }
+    });
 
     pc.ontrack = (event) => {
       setPeerConnected(true);
@@ -247,12 +275,22 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     const tvPc = new RTCPeerConnection(ICE_CONFIG);
     tvPcRef.current = tvPc;
 
+    // Add local video (no audio — echo prevention)
     if (localStreamRef.current) {
       localStreamRef.current.getVideoTracks().forEach((track) => {
-        tvPc.addTrack(track, localStreamRef.current);
+        const sender = tvPc.addTrack(track, localStreamRef.current);
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+          params.encodings[0].priority = 'high';
+          params.encodings[0].networkPriority = 'high';
+          params.degradationPreference = 'maintain-framerate';
+          sender.setParameters(params).catch(() => {});
+        } catch (e) {}
       });
     }
 
+    // Add remote tracks (video + audio from the other caller)
     if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
       const remoteStream = remoteVideoRef.current.srcObject;
       remoteStream.getTracks().forEach((track) => {
@@ -298,38 +336,66 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     const nextFacingMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(nextFacingMode);
 
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((t) => t.stop());
-    }
+    // Only stop and replace the VIDEO track — keep audio track alive to avoid connection instability
+    const oldVideoTracks = localStreamRef.current ? localStreamRef.current.getVideoTracks() : [];
+    oldVideoTracks.forEach((t) => t.stop());
 
-    const { stream } = await getMediaStream(
-      micEnabled,
-      videoEnabled,
-      callerLabel,
-      callerLabel === 'Caller 1' ? '#3b82f6' : '#06b6d4',
-      nextFacingMode
-    );
+    try {
+      // Request only video with new facing mode (keep existing audio)
+      const videoConstraints = {
+        video: { facingMode: nextFacingMode, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        audio: false, // Don't request new audio — reuse existing
+      };
+      const newStream = await navigator.mediaDevices.getUserMedia(videoConstraints);
+      const newVideoTrack = newStream.getVideoTracks()[0];
 
-    localStreamRef.current = stream;
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
-    }
+      if (!newVideoTrack) return;
 
-    // Replace track on the caller-to-caller peer connection
-    if (pcRef.current) {
-      const newVideoTrack = stream.getVideoTracks()[0];
-      const videoSender = pcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
-      if (videoSender && newVideoTrack) {
-        await videoSender.replaceTrack(newVideoTrack);
+      // Update local stream: remove old video track, add new one
+      if (localStreamRef.current) {
+        oldVideoTracks.forEach((t) => localStreamRef.current.removeTrack(t));
+        localStreamRef.current.addTrack(newVideoTrack);
       }
-    }
 
-    // Also replace track on the caller-to-TV peer connection to prevent TV stream from freezing
-    if (tvPcRef.current && activeTvPeerIdRef.current) {
-      const newVideoTrack = stream.getVideoTracks()[0];
-      const tvVideoSender = tvPcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
-      if (tvVideoSender && newVideoTrack) {
-        await tvVideoSender.replaceTrack(newVideoTrack);
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+
+      // Replace track on caller-to-caller peer connection
+      if (pcRef.current) {
+        const videoSender = pcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          await videoSender.replaceTrack(newVideoTrack);
+        }
+      }
+
+      // Replace track on caller-to-TV peer connection
+      if (tvPcRef.current && activeTvPeerIdRef.current) {
+        const tvVideoSender = tvPcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (tvVideoSender) {
+          await tvVideoSender.replaceTrack(newVideoTrack);
+        }
+      }
+    } catch (err) {
+      console.warn('Camera switch failed:', err.message);
+      // Fallback: try full stream replacement
+      const { stream } = await getMediaStream(
+        micEnabled, videoEnabled, callerLabel,
+        callerLabel === 'Caller 1' ? '#3b82f6' : '#06b6d4',
+        nextFacingMode
+      );
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      if (pcRef.current) {
+        const newVideoTrack = stream.getVideoTracks()[0];
+        const videoSender = pcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (videoSender && newVideoTrack) await videoSender.replaceTrack(newVideoTrack);
+      }
+      if (tvPcRef.current && activeTvPeerIdRef.current) {
+        const newVideoTrack = stream.getVideoTracks()[0];
+        const tvVideoSender = tvPcRef.current.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (tvVideoSender && newVideoTrack) await tvVideoSender.replaceTrack(newVideoTrack);
       }
     }
   };
@@ -537,34 +603,80 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
           </div>
         )}
 
-        {/* ─── PiP Local Preview ─── */}
-        <div style={{
-          position: 'absolute', top: '72px', right: '14px', zIndex: 20,
-          width: '120px', height: '160px',
-          borderRadius: 'var(--radius-lg)',
-          overflow: 'hidden',
-          border: '2px solid rgba(255,255,255,0.15)',
-          boxShadow: 'var(--shadow-lg)',
-          background: '#111',
-        }}>
-          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', display: videoEnabled ? 'block' : 'none' }} />
+        {/* ─── PiP Local Preview (FaceTime-style, draggable) ─── */}
+        <div
+          ref={pipRef}
+          onMouseDown={(e) => {
+            const d = pipDragRef.current;
+            d.dragging = true;
+            d.startX = e.clientX - (pipRef.current.offsetLeft || 0);
+            d.startY = e.clientY - (pipRef.current.offsetTop || 0);
+            const onMove = (ev) => {
+              if (!d.dragging) return;
+              const x = Math.max(0, Math.min(window.innerWidth - 140, ev.clientX - d.startX));
+              const y = Math.max(0, Math.min(window.innerHeight - 184, ev.clientY - d.startY));
+              pipRef.current.style.left = x + 'px';
+              pipRef.current.style.top = y + 'px';
+              pipRef.current.style.right = 'auto';
+            };
+            const onUp = () => { d.dragging = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          }}
+          onTouchStart={(e) => {
+            const touch = e.touches[0];
+            const d = pipDragRef.current;
+            d.dragging = true;
+            d.startX = touch.clientX - (pipRef.current.offsetLeft || 0);
+            d.startY = touch.clientY - (pipRef.current.offsetTop || 0);
+            const onMove = (ev) => {
+              if (!d.dragging) return;
+              const t = ev.touches[0];
+              const x = Math.max(0, Math.min(window.innerWidth - 140, t.clientX - d.startX));
+              const y = Math.max(0, Math.min(window.innerHeight - 184, t.clientY - d.startY));
+              pipRef.current.style.left = x + 'px';
+              pipRef.current.style.top = y + 'px';
+              pipRef.current.style.right = 'auto';
+            };
+            const onUp = () => { d.dragging = false; window.removeEventListener('touchmove', onMove); window.removeEventListener('touchend', onUp); };
+            window.addEventListener('touchmove', onMove, { passive: true });
+            window.addEventListener('touchend', onUp);
+          }}
+          style={{
+            position: 'absolute', top: '72px', right: '14px', zIndex: 20,
+            width: '130px', height: '174px',
+            borderRadius: '20px',
+            overflow: 'hidden',
+            border: '3px solid rgba(255,255,255,0.2)',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+            background: '#111',
+            cursor: 'grab',
+            touchAction: 'none',
+            transition: 'box-shadow 0.2s',
+            userSelect: 'none',
+          }}
+        >
+          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', display: videoEnabled ? 'block' : 'none', pointerEvents: 'none' }} />
           {!videoEnabled && (
             <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', color: 'var(--text-tertiary)' }}>
-              <CameraOff size={22} />
-              <span style={{ fontSize: '0.6rem', marginTop: '4px', fontWeight: 500 }}>Off</span>
+              <CameraOff size={24} />
+              <span style={{ fontSize: '0.65rem', marginTop: '6px', fontWeight: 500 }}>Paused</span>
             </div>
           )}
         </div>
       </div>
 
-      {/* ─── Bottom Toolbar ─── */}
+      {/* ─── Bottom Toolbar (FaceTime-style frosted pill) ─── */}
       <div style={{
-        position: 'absolute', bottom: '0', left: 0, right: 0, zIndex: 50,
-        padding: '16px 0 32px',
-        background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.5) 60%, transparent 100%)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        position: 'absolute', bottom: '28px', left: '50%', transform: 'translateX(-50%)', zIndex: 50,
+        display: 'flex', alignItems: 'center', gap: '14px',
+        padding: '14px 24px',
+        background: 'rgba(30, 30, 30, 0.75)',
+        backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        borderRadius: 'var(--radius-full)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: 'var(--shadow-lg)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
 
           {/* Mic Toggle */}
           <button
@@ -616,7 +728,6 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             <PhoneOff size={22} />
           </button>
 
-        </div>
       </div>
 
       {/* ─── TV Pairing Modal ─── */}

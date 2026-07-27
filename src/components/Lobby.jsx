@@ -34,7 +34,7 @@ export default function Lobby({ targetCallId, onStartInstantCall, onJoinCall }) 
               AiroCall
             </h1>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              Instant video calls with Smart TV streaming
+              Video calls. Instant. On any screen.
             </p>
           </div>
 
