@@ -1,7 +1,7 @@
 # AiroCall
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](./package.json)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange.svg)](./package.json)
 
 Ultra-lightweight WebRTC video calling with built-in Smart TV streaming. Designed to run on minimal infrastructure (Oracle Free Tier VPS: 1 vCPU, 1 GB RAM, ~60 MB memory footprint).
 
