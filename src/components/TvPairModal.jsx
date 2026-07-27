@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
-import { X, Tv, CheckCircle2, Copy, RefreshCw, Search, Check, Cast } from 'lucide-react';
-import { triggerPresentationCast } from '../services/presentationCast';
+import { X, CheckCircle2, Copy, RefreshCw, Search, Check, Cast } from 'lucide-react';
+import { triggerPresentationCast, isPresentationSupported } from '../services/presentationCast';
+
+// Detect mobile/touch devices where Presentation API doesn't work
+const isMobileDevice = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    ('ontouchstart' in window && window.innerWidth < 1024);
+};
 
 export default function TvPairModal({ isOpen, onClose, callId, ws, tvConnected, remoteVideoRef, pairCode, onDisconnectTv }) {
   const [copied, setCopied] = useState(false);
@@ -10,12 +16,12 @@ export default function TvPairModal({ isOpen, onClose, callId, ws, tvConnected, 
 
   const handleScanChromecast = async () => {
     if (!pairCode) return;
-    setCastStatus('Opening casting request...');
+    setCastStatus('Opening casting dialog...');
     const result = await triggerPresentationCast(pairCode);
     if (result.success) {
       setCastStatus(`Connected via ${result.method}`);
     } else {
-      setCastStatus(result.error || 'Casting failed. Use PIN code below on TV browser.');
+      setCastStatus(result.error || 'Use PIN code on TV browser instead.');
     }
   };
 
@@ -28,87 +34,109 @@ export default function TvPairModal({ isOpen, onClose, callId, ws, tvConnected, 
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(12, 5, 8, 0.88)', backdropFilter: 'blur(10px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-      <div className="glass-panel" style={{ width: '100%', maxWidth: '440px', padding: '28px', position: 'relative' }}>
-        
-        {/* Close Button */}
-        <button onClick={onClose} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#a3969d', cursor: 'pointer' }}>
-          <X size={20} />
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'var(--bg-overlay)', backdropFilter: 'blur(12px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '20px',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Stream to TV"
+    >
+      <div className="glass-panel animate-fade-in-scale" style={{ width: '100%', maxWidth: '400px', padding: '28px', position: 'relative' }}>
+
+        {/* Close */}
+        <button
+          onClick={onClose}
+          className="btn-icon"
+          style={{ position: 'absolute', top: '12px', right: '12px', width: '36px', height: '36px', background: 'transparent', border: 'none' }}
+          aria-label="Close"
+        >
+          <X size={18} />
         </button>
 
-        {/* Modal Title */}
+        {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <div style={{ margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-            <img src="/AiroCall.svg" alt="AiroCall" style={{ width: '48px', height: '48px' }} />
-            <div style={{ background: 'rgba(255, 85, 0, 0.2)', padding: '10px', borderRadius: '50%', display: 'flex', color: '#ffaa00' }}>
-              <Cast size={24} />
-            </div>
+          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '56px', height: '56px', borderRadius: '16px', background: 'var(--brand-primary-muted)', marginBottom: '14px' }}>
+            <Cast size={26} color="var(--brand-primary)" />
           </div>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Stream Call on TV</h2>
-          <p style={{ fontSize: '0.8rem', color: '#a3969d', marginTop: '4px' }}>
-            Scan Chromecasts on Wi-Fi or enter PIN on TV browser
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '4px' }}>Stream to TV</h2>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            Cast via Chromecast or enter PIN on TV browser
           </p>
         </div>
 
-        {/* Connection Status Indicator */}
+        {/* Connected State */}
         {tvConnected ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '20px' }}>
-            <div style={{ background: 'rgba(16, 185, 129, 0.18)', border: '1px solid rgba(16, 185, 129, 0.35)', color: '#34d399', padding: '12px', borderRadius: '12px', textAlign: 'center', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              <CheckCircle2 size={20} /> TV Receiver Connected - Streaming Live
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ background: 'var(--color-success-muted)', border: '1px solid rgba(34,197,94,0.25)', padding: '12px 16px', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 600, fontSize: '0.85rem', color: 'var(--color-success)' }}>
+              <CheckCircle2 size={18} /> TV Connected — Streaming Live
             </div>
             <button
-              onClick={() => {
-                onDisconnectTv();
-                onClose();
-              }}
+              onClick={() => { onDisconnectTv(); onClose(); }}
               className="glass-btn glass-btn-danger"
-              style={{ width: '100%', padding: '14px', justifyContent: 'center', fontSize: '0.95rem', borderRadius: '14px', background: '#ff0044', borderColor: '#ff3366', color: '#ffffff' }}
+              style={{ width: '100%', padding: '13px', justifyContent: 'center', fontSize: '0.9rem', borderRadius: 'var(--radius-md)' }}
             >
-              Disconnect TV Stream
+              Disconnect TV
             </button>
           </div>
         ) : (
           <>
-            {/* Option 1: Mobile Chromecast Scanner & Direct Cast Button */}
-            <div style={{ marginBottom: '16px' }}>
-              <button
-                onClick={handleScanChromecast}
-                className="glass-btn glass-btn-primary pulse-glow"
-                style={{ width: '100%', padding: '14px', justifyContent: 'center', fontSize: '0.95rem', borderRadius: '14px', gap: '10px' }}
-              >
-                <Search size={20} /> Scan for Nearby Chromecasts / TV
-              </button>
-              {castStatus && (
-                <span style={{ display: 'block', textAlign: 'center', fontSize: '0.75rem', color: '#ffaa00', marginTop: '6px' }}>
-                  {castStatus}
-                </span>
-              )}
-            </div>
+            {/* Scan Chromecast — Desktop only (Presentation API not supported on mobile) */}
+            {!isMobileDevice() && (
+              <>
+                <button
+                  onClick={handleScanChromecast}
+                  className="glass-btn glass-btn-primary"
+                  style={{ width: '100%', padding: '13px', justifyContent: 'center', fontSize: '0.9rem', borderRadius: 'var(--radius-md)', marginBottom: '6px' }}
+                >
+                  <Search size={18} /> Scan for Chromecast / TV
+                </button>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '16px 0', opacity: 0.5 }}>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border-glass)' }} />
-              <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: '#a3969d' }}>OR MANUAL PAIR</span>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border-glass)' }} />
-            </div>
+                {castStatus && (
+                  <p style={{ textAlign: 'center', fontSize: '0.72rem', color: 'var(--color-warning)', marginBottom: '12px' }}>
+                    {castStatus}
+                  </p>
+                )}
 
-            {/* Option 2: PIN Code without QR Code */}
-            <div style={{ background: 'rgba(0, 0, 0, 0.4)', padding: '20px', borderRadius: '14px', marginBottom: '16px', textAlign: 'center' }}>
-              <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '1px', color: '#a3969d', fontWeight: 600 }}>
+                {/* Divider */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '18px 0' }}>
+                  <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+                  <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 600, letterSpacing: '0.05em' }}>or manual</span>
+                  <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+                </div>
+              </>
+            )}
+
+            {/* PIN Code Display */}
+            <div style={{ background: 'var(--bg-main)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', textAlign: 'center', marginBottom: '16px' }}>
+              <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-tertiary)', fontWeight: 600 }}>
                 TV PIN Code
               </span>
-              <div style={{ fontSize: '2.2rem', fontWeight: 800, fontFamily: 'var(--font-mono)', letterSpacing: '4px', color: '#ffaa00', marginTop: '6px', marginBottom: '6px' }}>
-                {pairCode ? `${pairCode.substring(0, 3)}-${pairCode.substring(3)}` : <RefreshCw size={24} className="pulse-glow" />}
+              <div style={{ fontSize: '2rem', fontWeight: 800, fontFamily: 'var(--font-mono)', letterSpacing: '6px', color: 'var(--brand-primary)', marginTop: '8px', marginBottom: '8px' }}>
+                {pairCode ? `${pairCode.substring(0, 3)} ${pairCode.substring(3)}` : <RefreshCw size={22} className="pulse-glow" />}
               </div>
-              <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Enter code on {window.location.host}/tv</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                Enter on {window.location.host}/tv
+              </span>
             </div>
 
-            <div style={{ fontSize: '0.75rem', color: '#a3969d', textAlign: 'center', marginBottom: '16px', lineHeight: '1.4' }}>
-              <strong>Tip:</strong> For a split-screen video call layout, open the TV URL below in your TV's web browser app.
-            </div>
+            {/* Tip */}
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '16px', lineHeight: '1.5' }}>
+              Open the TV URL in your Smart TV's web browser for a split-screen video call layout.
+            </p>
 
-            <button onClick={copyLink} className="glass-btn" style={{ width: '100%', justifyContent: 'center', fontSize: '0.8rem' }}>
+            {/* Copy Link */}
+            <button
+              onClick={copyLink}
+              className="glass-btn"
+              style={{ width: '100%', justifyContent: 'center', fontSize: '0.8rem', padding: '11px', borderRadius: 'var(--radius-md)' }}
+            >
               {copied ? <Check size={14} /> : <Copy size={14} />}
-              {copied ? 'Link Copied!' : 'Copy Direct TV URL'}
+              {copied ? 'Copied!' : 'Copy TV Link'}
             </button>
           </>
         )}

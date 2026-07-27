@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.1.0] - 2026-07-27
+
+### UI Overhaul
+- Complete production-quality redesign of all components
+- New CSS design system with custom properties, typography scale, and animation library
+- Redesigned Lobby with centered card layout and branded form
+- Minimal sticky Navbar with blurred backdrop and pill-shaped navigation
+- Redesigned VideoCall with gradient overlays, circular icon toolbar, and refined PiP preview
+- Redesigned TvReceiver with separated idle/streaming views and fullscreen grid
+- Redesigned TvPairModal with accessible dialog semantics and click-outside-to-close
+
+### Bug Fixes
+- Fixed: call disconnect now fully stops camera/mic on the remote device and shows "Call Ended" overlay
+- Fixed: mobile audio echo — added aggressive Chrome echo cancellation constraints (googDAEchoCancellation, googHighpassFilter)
+- Fixed: Chromecast scan button now hidden on mobile (only shown on desktop where Presentation API works)
+- Fixed: hardcoded domain reference replaced with dynamic `window.location.host`
+
+### Technical
+- Bundle size reduced to 192 KB JS (gzip: 58 KB)
+- Added accessibility: aria-labels, focus-visible outlines, role="dialog" on modals
+- Added `.gitignore`, MIT→GPL v3 license, CHANGELOG, proper `.env.example` docs
+
+---
+
 ## [1.0.0] - 2024
 
 ### Features

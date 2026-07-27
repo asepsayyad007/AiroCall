@@ -1,6 +1,7 @@
 # AiroCall
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](./package.json)
 
 Ultra-lightweight WebRTC video calling with built-in Smart TV streaming. Designed to run on minimal infrastructure (Oracle Free Tier VPS: 1 vCPU, 1 GB RAM, ~60 MB memory footprint).
 
@@ -11,11 +12,13 @@ Ultra-lightweight WebRTC video calling with built-in Smart TV streaming. Designe
 - **1-on-1 Video Calls** — Peer-to-peer WebRTC audio/video with shareable invite links
 - **Smart TV Streaming** — Generate a 6-digit PIN, enter it on any TV browser, and stream the call to the big screen
 - **Split-Screen TV Layout** — Both callers displayed side-by-side (Teams/Zoom-style grid)
-- **Chromecast / Presentation API** — 1-click native casting via W3C Presentation API
+- **Chromecast / Presentation API** — 1-click native casting via W3C Presentation API (desktop only)
 - **Bandwidth Adaptation** — Real-time quality switching (HD → SD → Low → Audio-Only) based on `getStats()` every 2s
-- **Echo Prevention** — Smart audio routing sends only remote peer's audio to TV speakers
+- **Echo Prevention** — Smart audio routing sends only remote peer's audio to TV speakers; aggressive mobile echo cancellation
 - **Camera Switching** — Toggle front/rear camera on mobile with seamless track replacement
+- **Proper Call Cleanup** — Disconnecting fully releases camera/mic on both devices
 - **Minimal Footprint** — Signaling server uses <60 MB RAM; all media flows P2P
+- **Production UI** — Dark-themed design system with accessibility, responsive layout, and smooth animations
 
 ---
 

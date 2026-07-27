@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Tv, AlertCircle, Wifi, Volume2, ShieldCheck, PhoneOff, RefreshCw } from 'lucide-react';
+import { Tv, Wifi, Volume2, PhoneOff, RefreshCw, AlertCircle } from 'lucide-react';
 
 const ICE_CONFIG = {
   iceServers: [
@@ -19,7 +19,7 @@ function TvVideoPlayer({ stream }) {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
       videoRef.current.play().catch((e) => {
-        console.warn('TV Autoplay blocked unmuted audio, retrying muted:', e);
+        console.warn('TV Autoplay blocked, retrying muted:', e);
         if (videoRef.current) {
           videoRef.current.muted = true;
           videoRef.current.play().catch((err) => console.error('Muted autoplay also blocked:', err));
@@ -29,7 +29,7 @@ function TvVideoPlayer({ stream }) {
   }, [stream]);
 
   return (
-    <div style={{ position: 'relative', background: '#000000', width: '100%', height: '100%', borderRadius: '16px', border: '1px solid var(--border-glass)', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
       <video
         ref={videoRef}
         autoPlay
@@ -63,26 +63,23 @@ export default function TvReceiver({ initialCode, wsUrl }) {
 
   const resetHideTimer = () => {
     setShowHeader(true);
-    if (hideTimeoutRef.current) {
-      clearTimeout(hideTimeoutRef.current);
-    }
-    hideTimeoutRef.current = setTimeout(() => {
-      setShowHeader(false);
-    }, 4000);
+    if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    hideTimeoutRef.current = setTimeout(() => setShowHeader(false), 4000);
   };
 
   useEffect(() => {
     if (status === 'connected') {
       resetHideTimer();
-      window.addEventListener('mousemove', resetHideTimer);
-      window.addEventListener('keydown', resetHideTimer);
-      window.addEventListener('click', resetHideTimer);
-      
+      const handler = resetHideTimer;
+      window.addEventListener('mousemove', handler);
+      window.addEventListener('keydown', handler);
+      window.addEventListener('click', handler);
+
       return () => {
         if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
-        window.removeEventListener('mousemove', resetHideTimer);
-        window.removeEventListener('keydown', resetHideTimer);
-        window.removeEventListener('click', resetHideTimer);
+        window.removeEventListener('mousemove', handler);
+        window.removeEventListener('keydown', handler);
+        window.removeEventListener('click', handler);
       };
     }
   }, [status]);
@@ -110,12 +107,7 @@ export default function TvReceiver({ initialCode, wsUrl }) {
     wsRef.current = socket;
 
     socket.onopen = () => {
-      socket.send(
-        JSON.stringify({
-          type: 'verify-tv-code',
-          payload: { code: targetCode },
-        })
-      );
+      socket.send(JSON.stringify({ type: 'verify-tv-code', payload: { code: targetCode } }));
     };
 
     socket.onmessage = async (event) => {
@@ -128,13 +120,7 @@ export default function TvReceiver({ initialCode, wsUrl }) {
           setActiveCallId(currentCallId);
           setStatus('connected');
           setupWebRTC(socket, currentCallId);
-          
-          socket.send(
-            JSON.stringify({
-              type: 'tv-request-stream',
-              callId: currentCallId,
-            })
-          );
+          socket.send(JSON.stringify({ type: 'tv-request-stream', callId: currentCallId }));
         } else if (data.type === 'tv-disconnected') {
           if (pcRef.current) pcRef.current.close();
           cleanupStreams();
@@ -148,7 +134,6 @@ export default function TvReceiver({ initialCode, wsUrl }) {
           cleanupStreams();
         } else if (data.type === 'signal') {
           if (data.signalData.resetConnection) {
-            console.log('TV resetting WebRTC connection for renegotiation...');
             if (pcRef.current) pcRef.current.close();
             cleanupStreams();
             setupWebRTC(wsRef.current, activeCallIdRef.current);
@@ -189,7 +174,6 @@ export default function TvReceiver({ initialCode, wsUrl }) {
     pcRef.current = pc;
 
     pc.ontrack = (event) => {
-      console.log('TV Receiver media track received:', event.track.kind);
       const stream = event.streams[0];
       if (!stream) return;
 
@@ -212,145 +196,156 @@ export default function TvReceiver({ initialCode, wsUrl }) {
     };
   };
 
-  return (
-    <div style={{ minHeight: '85vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-      
-      {status === 'connected' ? (
-        <div style={{ width: '100%', maxWidth: '1100px', position: 'relative' }}>
-          
-          {/* Call Ended Fullscreen Overlay for TV */}
-          {isCallEnded && (
-            <div style={{ position: 'absolute', inset: 0, zIndex: 100, background: 'rgba(12, 5, 8, 0.95)', backdropFilter: 'blur(16px)', borderRadius: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px', textAlign: 'center' }}>
-              <div style={{ background: 'rgba(244, 63, 94, 0.2)', padding: '24px', borderRadius: '50%', marginBottom: '20px' }}>
-                <PhoneOff size={56} color="#fda4af" />
-              </div>
-              <h2 style={{ fontSize: '2.2rem', fontWeight: 800, marginBottom: '8px', color: '#ffffff' }}>Call Disconnected</h2>
-              <p style={{ fontSize: '1.1rem', color: '#a3969d', maxWidth: '420px', marginBottom: '28px' }}>
-                The video call stream has ended. Enter a new PIN code to pair another stream.
-              </p>
-              <button
-                onClick={() => setStatus('idle')}
-                className="glass-btn glass-btn-primary"
-                style={{ padding: '16px 32px', fontSize: '1rem', borderRadius: '16px' }}
-              >
-                <RefreshCw size={18} /> Enter New TV PIN
-              </button>
-            </div>
-          )}
+  // ─── Idle / Pairing Screen ───
+  if (status === 'idle' || status === 'pairing' || status === 'error') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 80px)', padding: '24px 16px' }}>
+        <div className="animate-fade-in-scale" style={{ width: '100%', maxWidth: '400px' }}>
+          <div className="glass-panel" style={{ padding: '40px 32px', textAlign: 'center' }}>
 
-          {/* TV Top Header Overlay */}
-          <div 
-            className="glass-panel" 
-            style={{ 
-              position: 'absolute', 
-              top: '20px', 
-              left: '20px', 
-              right: '20px', 
-              zIndex: 10, 
-              padding: '12px 20px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'space-between',
-              transition: 'opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
-              opacity: showHeader ? 1 : 0,
-              transform: showHeader ? 'translateY(0)' : 'translateY(-20px)',
-              pointerEvents: showHeader ? 'auto' : 'none'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <Tv size={24} color="#ffaa00" />
-              <div>
-                <h2 style={{ fontSize: '1.1rem', fontWeight: 700 }}>AiroCall Smart TV Receiver</h2>
-                <span style={{ fontSize: '0.75rem', color: '#a3969d' }}>Call ID: {activeCallId} | 1080p Live WebRTC Stream</span>
-              </div>
+            {/* Icon */}
+            <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '72px', height: '72px', borderRadius: '20px', background: 'var(--brand-primary-muted)', marginBottom: '20px' }}>
+              <Tv size={32} color="var(--brand-primary)" />
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <div className="badge badge-hd">
-                <Wifi size={14} /> LIVE STREAMING
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#34d399' }}>
-                <Volume2 size={16} /> TV Audio Output Active
-              </div>
-            </div>
-          </div>
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '6px' }}>Smart TV Receiver</h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '28px' }}>
+              Enter the 6-digit PIN shown on the caller's screen.
+            </p>
 
-          {/* Video Stream Receiver Split Canvas Grid */}
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: streamIds.length > 1 ? '1fr 1fr' : '1fr', 
-            gap: '20px',
-            height: '620px', 
-            borderRadius: '24px', 
-            border: '2px solid var(--border-glass)',
-            background: '#0c0508',
-            padding: '16px',
-            boxSizing: 'border-box'
-          }}>
-            {streamIds.length === 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#a3969d', width: '100%', height: '100%', gap: '16px' }}>
-                <RefreshCw size={36} className="pulse-glow" color="#ffaa00" />
-                <span>Waiting for caller streams...</span>
+            {/* Error Message */}
+            {errorMsg && (
+              <div className="animate-fade-in" style={{ background: 'var(--color-danger-muted)', border: '1px solid rgba(239,68,68,0.25)', padding: '10px 14px', borderRadius: 'var(--radius-md)', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#fca5a5' }}>
+                <AlertCircle size={16} />
+                {errorMsg}
               </div>
-            ) : (
-              streamIds.map((id) => (
-                <TvVideoPlayer key={id} stream={streamsMapRef.current.get(id)} />
-              ))
             )}
-          </div>
 
-          {/* TV Footer Bar */}
-          <div style={{ textAlign: 'center', marginTop: '16px', fontSize: '0.8rem', color: '#a3969d' }}>
-            AiroCall Smart TV Receiver Active • Ultra Low Latency P2P WebRTC
-          </div>
-
-        </div>
-      ) : (
-        /* Pairing Entry Screen for TV Screen */
-        <div className="glass-panel" style={{ width: '100%', maxWidth: '520px', padding: '40px 32px', textAlign: 'center' }}>
-          <div style={{ margin: '0 auto 20px', display: 'flex', justifyContent: 'center' }}>
-            <img src="/AiroCall.svg" alt="AiroCall Logo" style={{ width: '84px', height: '84px', filter: 'drop-shadow(0 8px 24px rgba(255, 85, 0, 0.6))' }} />
-          </div>
-
-          <h1 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '8px', background: 'linear-gradient(90deg, #ffffff, #ffaa00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            AiroCall Smart TV
-          </h1>
-          <p style={{ fontSize: '0.9rem', color: '#a3969d', marginBottom: '32px' }}>
-            Enter the 6-digit PIN code displayed on your phone or tablet to project the live call.
-          </p>
-
-          <div style={{ marginBottom: '24px' }}>
-            <input
-              type="text"
-              maxLength={6}
-              value={pinCode}
-              onChange={(e) => setPinCode(e.target.value.replace(/\D/g, ''))}
-              placeholder="123456"
-              style={{ width: '100%', textAlign: 'center', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '12px', fontFamily: 'var(--font-mono)', background: 'rgba(0,0,0,0.5)', border: '2px solid var(--border-glass)', color: '#ffaa00', padding: '16px', borderRadius: '16px' }}
-            />
-          </div>
-
-          {errorMsg && (
-            <div style={{ color: '#f87171', fontSize: '0.85rem', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-              <AlertCircle size={16} /> {errorMsg}
+            {/* PIN Input */}
+            <div style={{ marginBottom: '20px' }}>
+              <input
+                type="text"
+                className="input"
+                value={pinCode}
+                onChange={(e) => setPinCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="000000"
+                maxLength={6}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                style={{ textAlign: 'center', fontSize: '1.8rem', fontWeight: 700, fontFamily: 'var(--font-mono)', letterSpacing: '8px', padding: '18px' }}
+                aria-label="TV pairing PIN code"
+              />
             </div>
-          )}
 
-          <button
-            onClick={() => handlePair()}
-            disabled={status === 'pairing'}
-            className={`glass-btn glass-btn-primary ${pinCode.length === 6 && status !== 'pairing' ? 'pulse-glow' : ''}`}
-            style={{ width: '100%', padding: '16px', justifyContent: 'center', fontSize: '1.1rem', borderRadius: '14px' }}
-          >
-            <Tv size={20} /> {status === 'pairing' ? 'Connecting to Call Stream...' : 'Connect TV Receiver'}
-          </button>
+            {/* Connect Button */}
+            <button
+              onClick={() => handlePair()}
+              className="glass-btn glass-btn-primary"
+              disabled={status === 'pairing'}
+              style={{ width: '100%', padding: '14px', fontSize: '0.95rem', fontWeight: 600, borderRadius: 'var(--radius-lg)', opacity: status === 'pairing' ? 0.7 : 1 }}
+            >
+              {status === 'pairing' ? (
+                <>
+                  <RefreshCw size={18} className="pulse-glow" /> Connecting...
+                </>
+              ) : (
+                <>
+                  <Wifi size={18} /> Connect to Call
+                </>
+              )}
+            </button>
 
-          <div style={{ marginTop: '24px', fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-            <ShieldCheck size={14} /> Zero Server Transcoding Footprint (Ultra-fast P2P WebRTC)
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Connected: Streaming View ───
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: '#000', display: 'flex', flexDirection: 'column', zIndex: 1000 }}>
+
+      {/* Call Ended Overlay */}
+      {isCallEnded && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 100,
+          background: 'var(--bg-overlay)', backdropFilter: 'blur(20px)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: '32px', textAlign: 'center',
+        }}>
+          <div className="animate-fade-in-scale" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ width: '88px', height: '88px', borderRadius: '50%', background: 'var(--color-danger-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+              <PhoneOff size={40} color="#fca5a5" />
+            </div>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '8px' }}>Call Ended</h2>
+            <p style={{ fontSize: '1rem', color: 'var(--text-secondary)', maxWidth: '380px', marginBottom: '28px' }}>
+              The video call stream has disconnected. Enter a new PIN to pair again.
+            </p>
+            <button
+              onClick={() => { setStatus('idle'); setIsCallEnded(false); }}
+              className="glass-btn glass-btn-primary"
+              style={{ padding: '14px 28px', fontSize: '1rem', borderRadius: 'var(--radius-lg)' }}
+            >
+              <RefreshCw size={18} /> New PIN
+            </button>
           </div>
         </div>
       )}
 
+      {/* Auto-Hiding Top Header */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
+        padding: '16px 24px',
+        background: 'linear-gradient(180deg, rgba(0,0,0,0.7) 0%, transparent 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        transition: 'opacity 0.5s var(--ease-out), transform 0.5s var(--ease-out)',
+        opacity: showHeader ? 1 : 0,
+        transform: showHeader ? 'translateY(0)' : 'translateY(-10px)',
+        pointerEvents: showHeader ? 'auto' : 'none',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Tv size={22} color="var(--brand-primary)" />
+          <div>
+            <h2 style={{ fontSize: '1rem', fontWeight: 600 }}>AiroCall TV</h2>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+              Call {activeCallId} &middot; Live Stream
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <span className="badge badge-success" style={{ fontSize: '0.65rem' }}>
+            <div className="status-dot" style={{ width: '6px', height: '6px' }} />
+            LIVE
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            <Volume2 size={14} /> Audio Active
+          </div>
+        </div>
+      </div>
+
+      {/* Video Grid */}
+      <div style={{
+        flex: 1, display: 'grid',
+        gridTemplateColumns: streamIds.length > 1 ? '1fr 1fr' : '1fr',
+        gap: streamIds.length > 1 ? '4px' : '0',
+        padding: streamIds.length > 1 ? '4px' : '0',
+        background: '#000',
+      }}>
+        {streamIds.map((id) => (
+          <TvVideoPlayer key={id} stream={streamsMapRef.current.get(id)} />
+        ))}
+
+        {/* Fallback if no streams yet */}
+        {streamIds.length === 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
+            <div className="animate-fade-in" style={{ textAlign: 'center' }}>
+              <Wifi size={36} className="pulse-glow" style={{ marginBottom: '12px', opacity: 0.5 }} />
+              <p style={{ fontSize: '0.9rem' }}>Waiting for video stream...</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

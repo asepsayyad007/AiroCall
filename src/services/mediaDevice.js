@@ -3,12 +3,28 @@ import { createSyntheticMediaStream } from './videoSimulator';
 /**
  * Gets real camera and microphone MediaStream from navigator.mediaDevices.
  * Supports facingMode: 'user' (Front Selfie) vs 'environment' (Rear Camera)
+ *
+ * Audio constraints are tuned aggressively for mobile devices where the
+ * loudspeaker output can bleed back into the microphone, causing echo/feedback.
  */
 export async function getMediaStream(audio = true, video = true, label = 'User', color = '#3b82f6', facingMode = 'user') {
   try {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       const constraints = {
-        audio: audio ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false,
+        audio: audio
+          ? {
+              echoCancellation: { ideal: true },
+              noiseSuppression: { ideal: true },
+              autoGainControl: { ideal: true },
+              // Chrome-specific: suppress loopback from speaker → mic on mobile
+              googEchoCancellation: { ideal: true },
+              googAutoGainControl: { ideal: true },
+              googNoiseSuppression: { ideal: true },
+              googHighpassFilter: { ideal: true },
+              googEchoCancellation2: { ideal: true },
+              googDAEchoCancellation: { ideal: true },
+            }
+          : false,
         video: video ? { facingMode, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } : false,
       };
       const realStream = await navigator.mediaDevices.getUserMedia(constraints);

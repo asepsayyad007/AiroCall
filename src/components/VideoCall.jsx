@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Camera, CameraOff, Tv, Cast, PhoneOff, Activity, Link, Copy, Users, RefreshCw, AlertTriangle, SwitchCamera, Check } from 'lucide-react';
+import { Mic, MicOff, Camera, CameraOff, Tv, Cast, PhoneOff, Link, Copy, Users, RefreshCw, AlertTriangle, SwitchCamera, Check, MoreVertical } from 'lucide-react';
 import TvPairModal from './TvPairModal';
 import { BandwidthEngine } from '../services/bandwidthEngine';
 import { getMediaStream } from '../services/mediaDevice';
@@ -29,7 +29,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
   const [callDuration, setCallDuration] = useState(0);
   const [copiedLink, setCopiedLink] = useState(false);
   const [isDataSaver, setIsDataSaver] = useState(false);
-  const [castStatus, setCastStatus] = useState('');
+  const [stats, setStats] = useState(null);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -62,7 +62,6 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
 
   useEffect(() => {
     async function initCall() {
-      // 1. Get Local Camera & Microphone
       const { stream } = await getMediaStream(
         true,
         true,
@@ -76,7 +75,6 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
         localVideoRef.current.srcObject = stream;
       }
 
-      // 2. Attach WebSocket Listener
       if (ws) {
         setupWebRTC(ws, stream);
 
@@ -107,21 +105,40 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             } else if (data.type === 'call-ended') {
               setCallEndedByPeer(true);
               setPeerConnected(false);
+              // Stop all media and close connections immediately
+              if (pcRef.current) {
+                pcRef.current.close();
+                pcRef.current = null;
+              }
+              if (tvPcRef.current) {
+                tvPcRef.current.close();
+                tvPcRef.current = null;
+              }
+              if (bwEngineRef.current) {
+                bwEngineRef.current.stop();
+                bwEngineRef.current = null;
+              }
+              if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach((t) => t.stop());
+                localStreamRef.current = null;
+              }
+              if (localVideoRef.current) {
+                localVideoRef.current.srcObject = null;
+              }
+              if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = null;
+              }
             } else if (data.type === 'tv-code-generated') {
               setTvCode(data.code);
             } else if (data.type === 'tv-connected') {
               setTvConnected(true);
               activeTvPeerIdRef.current = data.tvPeerId;
             } else if (data.type === 'tv-request-stream') {
-              // TV actively asked for a fresh stream offer (sent right after pairing).
-              // This fires even if TV joined before the remote peer connected.
               const tvPeerId = data.tvPeerId;
               if (tvPeerId) {
                 activeTvPeerIdRef.current = tvPeerId;
                 setTvConnected(true);
               }
-              // Always re-run setupTvReceiverConnection here — by this point the
-              // remote stream is either already flowing or we send local stream as fallback.
               setupTvReceiverConnection(ws, activeTvPeerIdRef.current || tvPeerId);
             } else if (data.type === 'signal') {
               const { senderPeerId, signalData } = data;
@@ -179,21 +196,17 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
 
     pc.ontrack = (event) => {
-      console.log('Received remote media track from friend:', event.track.kind);
       setPeerConnected(true);
       setConnectionState('connected');
 
-      let remoteStream = null;
       if (remoteVideoRef.current) {
         if (event.streams && event.streams[0]) {
-          remoteStream = event.streams[0];
-          remoteVideoRef.current.srcObject = remoteStream;
+          remoteVideoRef.current.srcObject = event.streams[0];
         } else {
           if (!remoteVideoRef.current.srcObject) {
             remoteVideoRef.current.srcObject = new MediaStream();
           }
           remoteVideoRef.current.srcObject.addTrack(event.track);
-          remoteStream = remoteVideoRef.current.srcObject;
         }
         remoteVideoRef.current.play().catch((e) => console.warn('Autoplay warning:', e));
       }
@@ -234,14 +247,12 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     const tvPc = new RTCPeerConnection(ICE_CONFIG);
     tvPcRef.current = tvPc;
 
-    // 1. Add local caller video track (exclude local audio to prevent feedback howling)
     if (localStreamRef.current) {
       localStreamRef.current.getVideoTracks().forEach((track) => {
         tvPc.addTrack(track, localStreamRef.current);
       });
     }
 
-    // 2. Add remote caller video & audio tracks (from the friend)
     if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
       const remoteStream = remoteVideoRef.current.srcObject;
       remoteStream.getTracks().forEach((track) => {
@@ -374,24 +385,6 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     }
   };
 
-  const handlePresentationCastClick = async () => {
-    if (!tvCode) {
-      setCastStatus('Generating TV PIN Code...');
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'generate-tv-code', callId }));
-      }
-      return;
-    }
-    setCastStatus('Opening Smart TV Cast Dialog...');
-    const result = await triggerPresentationCast(tvCode);
-    if (result.success) {
-      setCastStatus('Casting successfully started!');
-    } else {
-      setCastStatus(result.error || 'Casting failed. Opening manual pairing menu.');
-      setIsTvModalOpen(true);
-    }
-  };
-
   const handleDisconnectTvClick = () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'tv-disconnect', callId }));
@@ -402,200 +395,221 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
     }
     setTvConnected(false);
     activeTvPeerIdRef.current = null;
-    setCastStatus('Casting stopped.');
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#000000', display: 'flex', flexDirection: 'column', zIndex: 1000, overflow: 'hidden' }}>
-      
-      {/* WhatsApp-Style Top Header Bar */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, padding: '16px 20px', background: 'linear-gradient(180deg, rgba(0,0,0,0.85) 0%, transparent 100%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <img src="/AiroCall.svg" alt="AiroCall" style={{ width: '36px', height: '36px' }} />
+    <div style={{ position: 'fixed', inset: 0, background: '#000', display: 'flex', flexDirection: 'column', zIndex: 1000 }}>
+
+      {/* ─── Top Bar ─── */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50,
+        padding: '14px 20px',
+        background: 'linear-gradient(180deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.4) 60%, transparent 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        {/* Left: Call Info */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <img src="/AiroCall.svg" alt="" style={{ width: '28px', height: '28px', opacity: 0.9 }} />
           <div>
-            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#ffffff' }}>AiroCall Video</h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-              <span style={{ fontSize: '0.75rem', color: peerConnected ? '#34d399' : '#ffaa00', fontWeight: 600 }}>
-                {peerConnected ? formatTimer(callDuration) : 'Waiting for friend...'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {peerConnected ? callerLabel : 'AiroCall'}
               </span>
               {tvConnected && (
-                <span style={{ fontSize: '0.7rem', background: 'rgba(255,85,0,0.25)', color: '#ffaa00', padding: '2px 8px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  <Tv size={12} /> TV Streaming
+                <span className="badge badge-brand" style={{ fontSize: '0.6rem', padding: '2px 7px' }}>
+                  <Tv size={10} /> TV
                 </span>
               )}
             </div>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+              {peerConnected ? formatTimer(callDuration) : 'Connecting...'}
+            </span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {castStatus && (
-            <span style={{ fontSize: '0.7rem', color: '#ffaa00', marginRight: '6px' }}>
-              {castStatus}
-            </span>
-          )}
-
-          <button
-            onClick={handlePresentationCastClick}
-            className={`glass-btn ${tvConnected ? 'glass-btn-primary pulse-glow' : ''}`}
-            style={{ borderRadius: '50%', width: '40px', height: '40px', padding: 0, justifyContent: 'center', background: tvConnected ? 'linear-gradient(135deg, #ff0044, #ff5500)' : 'rgba(255, 255, 255, 0.1)' }}
-            title="Smart TV split-screen stream"
-          >
-            <Cast size={18} color={tvConnected ? '#ffffff' : '#ffaa00'} />
-          </button>
-
+        {/* Right: Actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button
             onClick={copyCallInviteLink}
-            className="glass-btn glass-btn-primary"
-            style={{ padding: '8px 14px', fontSize: '0.75rem', borderRadius: '20px' }}
+            className="glass-btn"
+            style={{ padding: '7px 12px', fontSize: '0.75rem', borderRadius: 'var(--radius-full)', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }}
+            aria-label="Copy invite link"
           >
             {copiedLink ? <Check size={14} /> : <Link size={14} />}
-            {copiedLink ? 'Link Copied' : 'Copy Invite'}
+            <span style={{ display: 'none' }}>{/* icon-only on mobile */}</span>
+            {copiedLink ? 'Copied' : 'Invite'}
           </button>
         </div>
       </div>
 
-      {/* Connection Stuck / Interrupted Retry Banner Overlay */}
+      {/* ─── Connection Failed Banner ─── */}
       {connectionState === 'failed' && !callEndedByPeer && (
-        <div style={{ position: 'absolute', top: '70px', left: '16px', right: '16px', zIndex: 60, background: 'rgba(244, 63, 94, 0.9)', backdropFilter: 'blur(10px)', color: '#ffffff', padding: '12px 18px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', fontWeight: 600 }}>
-            <AlertTriangle size={20} /> Connection stuck or interrupted.
+        <div className="animate-slide-down" style={{
+          position: 'absolute', top: '64px', left: '16px', right: '16px', zIndex: 60,
+          background: 'var(--color-danger-muted)', border: '1px solid rgba(239,68,68,0.3)',
+          padding: '12px 16px', borderRadius: 'var(--radius-md)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', fontWeight: 500, color: '#fca5a5' }}>
+            <AlertTriangle size={16} /> Connection interrupted
           </div>
-          <button
-            onClick={handleReconnectCall}
-            className="glass-btn"
-            style={{ background: '#ffffff', color: '#0f172a', border: 'none', padding: '6px 14px', fontSize: '0.8rem', borderRadius: '10px', fontWeight: 700 }}
-          >
-            <RefreshCw size={14} /> Reconnect Now
+          <button onClick={handleReconnectCall} className="glass-btn" style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: 'var(--radius-full)' }}>
+            <RefreshCw size={13} /> Retry
           </button>
         </div>
       )}
 
-      {/* Call Ended by Friend Overlay */}
+      {/* ─── Call Ended Overlay ─── */}
       {callEndedByPeer && (
-        <div style={{ position: 'absolute', inset: 0, background: 'rgba(12, 5, 8, 0.95)', backdropFilter: 'blur(16px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center', zIndex: 100 }}>
-          <div style={{ background: 'rgba(244, 63, 94, 0.2)', padding: '24px', borderRadius: '50%', marginBottom: '20px' }}>
-            <PhoneOff size={48} color="#fda4af" />
-          </div>
-          <h2 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '8px' }}>Call Ended</h2>
-          <p style={{ fontSize: '0.95rem', color: '#a3969d', marginBottom: '24px' }}>
-            Your friend has ended the video call.
-          </p>
-          <button onClick={onLeaveCall} className="glass-btn glass-btn-primary" style={{ padding: '14px 28px', fontSize: '1rem', borderRadius: '16px' }}>
-            Return to Home
-          </button>
-        </div>
-      )}
-
-      {/* Main Video View Display */}
-      <div style={{ position: 'relative', width: '100%', height: '100%', flex: 1, background: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        
-        {/* Remote Caller Video Stream (object-fit: contain for portrait vs landscape) */}
-        <video ref={remoteVideoRef} autoPlay playsInline disableRemotePlayback={false} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-
-        {/* Waiting for Friend Banner overlay when alone */}
-        {!peerConnected && !callEndedByPeer && (
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(12, 5, 8, 0.88)', backdropFilter: 'blur(12px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center', zIndex: 4 }}>
-            <div style={{ background: 'rgba(255, 85, 0, 0.2)', padding: '24px', borderRadius: '50%', marginBottom: '20px' }}>
-              <Users size={52} color="#ffaa00" className="pulse-glow" />
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 100,
+          background: 'var(--bg-overlay)', backdropFilter: 'blur(20px)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: '24px', textAlign: 'center',
+        }}>
+          <div className="animate-fade-in-scale" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--color-danger-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+              <PhoneOff size={36} color="#fca5a5" />
             </div>
-            <h3 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: '8px' }}>Waiting for Friend</h3>
-            <p style={{ fontSize: '0.9rem', color: '#a3969d', maxWidth: '340px', marginBottom: '24px' }}>
-              Share your instant call link with a friend to start video calling!
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px' }}>Call Ended</h2>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '28px' }}>
+              The other participant has left the call.
             </p>
-            <button onClick={copyCallInviteLink} className="glass-btn glass-btn-primary" style={{ padding: '14px 28px', fontSize: '1rem', borderRadius: '16px' }}>
-              {copiedLink ? <Check size={18} /> : <Copy size={18} />}
-              {copiedLink ? 'Link Copied to Clipboard' : 'Copy Call Invite Link'}
+            <button onClick={onLeaveCall} className="glass-btn glass-btn-primary" style={{ padding: '14px 32px', fontSize: '0.95rem', borderRadius: 'var(--radius-lg)' }}>
+              Return Home
             </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Audio Only Overlay if Manual Data Saver Activated */}
-        {isDataSaver && (
-          <div style={{ position: 'absolute', inset: 0, background: '#090d16', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}>
-            <div style={{ background: 'rgba(168, 85, 247, 0.2)', padding: '24px', borderRadius: '50%', marginBottom: '12px' }}>
-              <Mic size={48} color="#c084fc" className="pulse-glow" />
+      {/* ─── Main Video Area ─── */}
+      <div style={{ position: 'relative', width: '100%', height: '100%', flex: 1, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+
+        {/* Remote Video */}
+        <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+
+        {/* Waiting for Peer Overlay */}
+        {!peerConnected && !callEndedByPeer && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 4,
+            background: 'var(--bg-overlay)', backdropFilter: 'blur(12px)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            padding: '24px', textAlign: 'center',
+          }}>
+            <div className="animate-fade-in-scale" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--brand-primary-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+                <Users size={36} color="var(--brand-primary)" className="pulse-glow" />
+              </div>
+              <h3 style={{ fontSize: '1.3rem', fontWeight: 700, marginBottom: '8px' }}>Waiting for participant</h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '300px', marginBottom: '24px' }}>
+                Share the invite link so your friend can join.
+              </p>
+              <button onClick={copyCallInviteLink} className="glass-btn glass-btn-primary" style={{ padding: '12px 24px', fontSize: '0.9rem', borderRadius: 'var(--radius-lg)' }}>
+                {copiedLink ? <Check size={16} /> : <Copy size={16} />}
+                {copiedLink ? 'Link Copied' : 'Copy Invite Link'}
+              </button>
             </div>
-            <h3 style={{ fontSize: '1.2rem', color: '#c084fc', fontWeight: 700 }}>Audio-Only Data Saver Active</h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px' }}>Video paused. Tap Data Saver button below to resume video.</p>
           </div>
         )}
 
-        {/* Floating PiP Local Preview */}
-        <div className="pip-preview" style={{ position: 'absolute', top: '80px', right: '16px', width: '110px', height: '150px', borderRadius: '16px', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.25)', boxShadow: '0 12px 32px rgba(0,0,0,0.8)', zIndex: 20, background: '#000' }}>
-          <video ref={localVideoRef} autoPlay playsInline muted disableRemotePlayback={false} style={{ width: '100%', height: '100%', objectFit: 'contain', display: videoEnabled ? 'block' : 'none' }} />
+        {/* Audio-Only Data Saver Overlay */}
+        {isDataSaver && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 5,
+            background: 'var(--bg-main)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'rgba(168, 85, 247, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px' }}>
+              <Mic size={32} color="#c084fc" className="pulse-glow" />
+            </div>
+            <h3 style={{ fontSize: '1.1rem', color: '#c084fc', fontWeight: 600 }}>Audio Only</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '4px' }}>Data saver active. Video is paused.</p>
+          </div>
+        )}
+
+        {/* ─── PiP Local Preview ─── */}
+        <div style={{
+          position: 'absolute', top: '72px', right: '14px', zIndex: 20,
+          width: '120px', height: '160px',
+          borderRadius: 'var(--radius-lg)',
+          overflow: 'hidden',
+          border: '2px solid rgba(255,255,255,0.15)',
+          boxShadow: 'var(--shadow-lg)',
+          background: '#111',
+        }}>
+          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', display: videoEnabled ? 'block' : 'none' }} />
           {!videoEnabled && (
-            <div style={{ width: '100%', height: '100%', background: '#1e1b1d', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#a3969d' }}>
-              <CameraOff size={24} color="#ffaa00" />
-              <span style={{ fontSize: '0.65rem', marginTop: '4px', fontWeight: 600 }}>Camera Off</span>
+            <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface)', color: 'var(--text-tertiary)' }}>
+              <CameraOff size={22} />
+              <span style={{ fontSize: '0.6rem', marginTop: '4px', fontWeight: 500 }}>Off</span>
             </div>
           )}
         </div>
-
       </div>
 
-      {/* Floating Bottom Action Toolbar */}
-      <div style={{ position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(28, 12, 18, 0.88)', backdropFilter: 'blur(20px)', padding: '12px 20px', borderRadius: '40px', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
-        <button
-          onClick={toggleMic}
-          className={`glass-btn ${micEnabled ? '' : 'glass-btn-danger'}`}
-          style={{ borderRadius: '50%', width: '48px', height: '48px', padding: 0, justifyContent: 'center' }}
-          title={micEnabled ? 'Mute Mic' : 'Unmute Mic'}
-        >
-          {micEnabled ? <Mic size={20} /> : <MicOff size={20} />}
-        </button>
+      {/* ─── Bottom Toolbar ─── */}
+      <div style={{
+        position: 'absolute', bottom: '0', left: 0, right: 0, zIndex: 50,
+        padding: '16px 0 32px',
+        background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.5) 60%, transparent 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
 
-        {/* Camera On / Camera Off Toggle Button */}
-        <button
-          onClick={toggleVideo}
-          className={`glass-btn ${videoEnabled ? '' : 'glass-btn-danger'}`}
-          style={{ borderRadius: '50%', width: '48px', height: '48px', padding: 0, justifyContent: 'center' }}
-          title={videoEnabled ? 'Turn Camera Off' : 'Turn Camera On'}
-        >
-          {videoEnabled ? <Camera size={20} /> : <CameraOff size={20} />}
-        </button>
+          {/* Mic Toggle */}
+          <button
+            onClick={toggleMic}
+            className={`btn-icon btn-icon-lg ${!micEnabled ? 'btn-icon-muted' : ''}`}
+            aria-label={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
+            title={micEnabled ? 'Mute' : 'Unmute'}
+          >
+            {micEnabled ? <Mic size={22} /> : <MicOff size={22} />}
+          </button>
 
-        {/* Camera Switcher (Front <-> Rear) */}
-        <button
-          onClick={toggleCameraFacingMode}
-          className="glass-btn"
-          style={{ borderRadius: '50%', width: '48px', height: '48px', padding: 0, justifyContent: 'center' }}
-          title="Switch Camera (Front/Rear)"
-        >
-          <SwitchCamera size={20} />
-        </button>
+          {/* Camera Toggle */}
+          <button
+            onClick={toggleVideo}
+            className={`btn-icon btn-icon-lg ${!videoEnabled ? 'btn-icon-muted' : ''}`}
+            aria-label={videoEnabled ? 'Turn camera off' : 'Turn camera on'}
+            title={videoEnabled ? 'Camera Off' : 'Camera On'}
+          >
+            {videoEnabled ? <Camera size={22} /> : <CameraOff size={22} />}
+          </button>
 
-        {/* Stream to TV Button */}
-        <button
-          onClick={() => setIsTvModalOpen(true)}
-          className={`glass-btn ${tvConnected ? 'glass-btn-primary pulse-glow' : ''}`}
-          style={{ borderRadius: '50%', width: '48px', height: '48px', padding: 0, justifyContent: 'center', background: tvConnected ? 'linear-gradient(135deg, #ff0044, #ff5500)' : 'rgba(255, 85, 0, 0.2)' }}
-          title="Stream to TV / Scan Chromecasts"
-        >
-          <Tv size={20} color={tvConnected ? '#ffffff' : '#ffaa00'} />
-        </button>
+          {/* Switch Camera */}
+          <button
+            onClick={toggleCameraFacingMode}
+            className="btn-icon btn-icon-lg"
+            aria-label="Switch camera"
+            title="Switch Camera"
+          >
+            <SwitchCamera size={22} />
+          </button>
 
-        {/* ICE Reconnect & Retry Button */}
-        <button
-          onClick={handleReconnectCall}
-          className="glass-btn"
-          style={{ borderRadius: '50%', width: '48px', height: '48px', padding: 0, justifyContent: 'center' }}
-          title="Reconnect / Retry Call"
-        >
-          <RefreshCw size={18} />
-        </button>
+          {/* TV Stream */}
+          <button
+            onClick={() => setIsTvModalOpen(true)}
+            className={`btn-icon btn-icon-lg ${tvConnected ? 'btn-icon-active' : ''}`}
+            aria-label="Stream to TV"
+            title="Stream to TV"
+          >
+            <Tv size={22} />
+          </button>
 
-        {/* End Call Button */}
-        <button
-          onClick={handleEndCallClick}
-          className="glass-btn glass-btn-danger"
-          style={{ borderRadius: '50%', width: '48px', height: '48px', padding: 0, justifyContent: 'center', background: '#ff0044', borderColor: '#ff3366' }}
-          title="End Call"
-        >
-          <PhoneOff size={20} color="#ffffff" />
-        </button>
+          {/* End Call */}
+          <button
+            onClick={handleEndCallClick}
+            className="btn-icon btn-icon-lg btn-icon-danger"
+            aria-label="End call"
+            title="End Call"
+          >
+            <PhoneOff size={22} />
+          </button>
+
+        </div>
       </div>
 
-      {/* TV Pairing Modal */}
+      {/* ─── TV Pairing Modal ─── */}
       <TvPairModal
         isOpen={isTvModalOpen}
         onClose={() => setIsTvModalOpen(false)}
@@ -606,7 +620,6 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
         pairCode={tvCode}
         onDisconnectTv={handleDisconnectTvClick}
       />
-
     </div>
   );
 }

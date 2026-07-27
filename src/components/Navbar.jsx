@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Video, Tv, Cpu, Activity } from 'lucide-react';
+import { Video, Tv, Activity } from 'lucide-react';
 
 export default function Navbar({ currentMode, setMode }) {
   const [serverHealth, setServerHealth] = useState(null);
@@ -13,56 +13,61 @@ export default function Navbar({ currentMode, setMode }) {
     };
 
     fetchHealth();
-    const interval = setInterval(fetchHealth, 5000);
+    const interval = setInterval(fetchHealth, 10000);
     return () => clearInterval(interval);
   }, []);
 
   return (
-    <header style={{ borderBottom: '1px solid var(--border-glass)' }} className="glass-panel">
-      <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
-        
-        {/* Brand Logo with AiroCall.svg (Increased Size to match AiroCall text) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }} onClick={() => setMode('caller')}>
-          <img src="/AiroCall.svg" alt="AiroCall Logo" style={{ width: '48px', height: '48px', filter: 'drop-shadow(0 4px 12px rgba(255, 85, 0, 0.7))' }} />
+    <header style={{ position: 'sticky', top: 0, zIndex: 100, borderBottom: '1px solid var(--border-subtle)', background: 'rgba(10, 10, 15, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+
+        {/* Brand */}
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}
+          onClick={() => setMode('caller')}
+          role="button"
+          tabIndex={0}
+          aria-label="Go to home"
+        >
+          <img src="/AiroCall.svg" alt="" style={{ width: '36px', height: '36px' }} />
           <div>
-            <h1 style={{ fontSize: '1.6rem', fontWeight: 800, background: 'linear-gradient(90deg, #ffffff, #ffaa00)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', lineHeight: '1.1' }}>
+            <h1 style={{ fontSize: '1.1rem', fontWeight: 700, lineHeight: 1.1, color: 'var(--text-primary)' }}>
               AiroCall
             </h1>
-            <p style={{ fontSize: '0.7rem', color: '#a3969d', fontWeight: 500 }}>
-              Smart TV WebRTC Streamer
+            <p style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', fontWeight: 500 }}>
+              Video &middot; TV Stream
             </p>
           </div>
         </div>
 
         {/* Navigation Tabs */}
-        <nav style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(0, 0, 0, 0.4)', padding: '4px', borderRadius: '14px', border: '1px solid var(--border-glass)' }}>
+        <nav style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--bg-surface)', padding: '4px', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-subtle)' }}>
           <button
             onClick={() => setMode('caller')}
-            className={`glass-btn ${currentMode === 'caller' ? 'glass-btn-primary' : ''}`}
-            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+            className={currentMode === 'caller' ? 'glass-btn glass-btn-primary' : 'glass-btn glass-btn-ghost'}
+            style={{ padding: '7px 14px', fontSize: '0.8rem', borderRadius: 'var(--radius-full)' }}
+            aria-current={currentMode === 'caller' ? 'page' : undefined}
           >
-            <Video size={16} /> WebRTC Calls
+            <Video size={15} /> Calls
           </button>
 
           <button
             onClick={() => setMode('tv')}
-            className={`glass-btn ${currentMode === 'tv' ? 'glass-btn-primary' : ''}`}
-            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+            className={currentMode === 'tv' ? 'glass-btn glass-btn-primary' : 'glass-btn glass-btn-ghost'}
+            style={{ padding: '7px 14px', fontSize: '0.8rem', borderRadius: 'var(--radius-full)' }}
+            aria-current={currentMode === 'tv' ? 'page' : undefined}
           >
-            <Tv size={16} /> Smart TV Receiver
+            <Tv size={15} /> TV
           </button>
         </nav>
 
-        {/* VPS Footprint Monitor */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(20, 10, 14, 0.8)', padding: '6px 14px', borderRadius: '20px', border: '1px solid var(--border-glass)' }}>
-          <Cpu size={16} color="#ffaa00" />
-          <div style={{ fontSize: '0.75rem' }}>
-            <span style={{ color: '#a3969d' }}>Oracle VPS:</span>{' '}
-            <strong style={{ color: '#34d399' }}>
-              {serverHealth ? `${serverHealth.memory.rssMB} MB RAM` : 'Online (~58MB)'}
-            </strong>
-          </div>
-          <Activity size={14} className="pulse-glow" color="#ff5500" />
+        {/* Server Status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+          <div className="status-dot" style={{ width: '6px', height: '6px' }} />
+          <span style={{ display: 'none' }}>{/* Hidden on mobile via CSS if needed */}</span>
+          <span>
+            {serverHealth ? `${serverHealth.memory.rssMB} MB` : 'Online'}
+          </span>
         </div>
 
       </div>
