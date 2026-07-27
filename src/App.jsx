@@ -3,6 +3,8 @@ import Navbar from './components/Navbar';
 import Lobby from './components/Lobby';
 import VideoCall from './components/VideoCall';
 import TvReceiver from './components/TvReceiver';
+import PrivacyPolicy from './components/PrivacyPolicy';
+import TermsOfService from './components/TermsOfService';
 
 export default function App() {
   const [mode, setMode] = useState('caller');
@@ -16,6 +18,8 @@ export default function App() {
   const codeParam = urlParams.get('code');
   const callParam = urlParams.get('call');
   const isTvRoute = window.location.pathname.startsWith('/tv') || codeParam;
+  const isPrivacyRoute = window.location.pathname === '/privacy';
+  const isTermsRoute = window.location.pathname === '/terms';
 
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsHost = process.env.NODE_ENV === 'production' ? window.location.host : 'localhost:3000';
@@ -26,6 +30,7 @@ export default function App() {
       setMode('tv');
       return;
     }
+    if (isPrivacyRoute || isTermsRoute) return;
 
     function connect() {
       const socket = new WebSocket(wsUrl);
@@ -69,7 +74,7 @@ export default function App() {
         wsRef.current.close(1000);
       }
     };
-  }, [wsUrl, isTvRoute]);
+  }, [wsUrl, isTvRoute, isPrivacyRoute, isTermsRoute]);
 
   const handleStartInstantCall = (user) => {
     setUserName(user || 'Caller 1');
@@ -106,7 +111,10 @@ export default function App() {
       <Navbar currentMode={mode} setMode={setMode} />
 
       <main style={{ flex: 1 }}>
-        {mode === 'caller' && (
+        {isPrivacyRoute && <PrivacyPolicy />}
+        {isTermsRoute && <TermsOfService />}
+
+        {!isPrivacyRoute && !isTermsRoute && mode === 'caller' && (
           !activeCallId ? (
             <Lobby
               targetCallId={callParam}
@@ -123,8 +131,16 @@ export default function App() {
           )
         )}
 
-        {mode === 'tv' && <TvReceiver initialCode={codeParam} wsUrl={wsUrl} />}
+        {!isPrivacyRoute && !isTermsRoute && mode === 'tv' && <TvReceiver initialCode={codeParam} wsUrl={wsUrl} />}
       </main>
+
+      {/* Footer links — only show on lobby/static pages */}
+      {!activeCallId && !isTvRoute && (
+        <footer style={{ textAlign: 'center', padding: '16px', fontSize: '0.72rem', color: 'var(--text-tertiary)', display: 'flex', justifyContent: 'center', gap: '16px' }}>
+          <a href="/privacy" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Privacy Policy</a>
+          <a href="/terms" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Terms of Service</a>
+        </footer>
+      )}
     </div>
   );
 }
