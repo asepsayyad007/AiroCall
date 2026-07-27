@@ -69,10 +69,41 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
   useEffect(() => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.muted = tvConnected;
-      // Also set volume to 0 as double protection against audio leaking
       remoteVideoRef.current.volume = tvConnected ? 0 : 1;
     }
   }, [tvConnected]);
+
+  // Auto Picture-in-Picture when user switches away from tab/app
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && remoteVideoRef.current && remoteVideoRef.current.srcObject) {
+        // Enter PiP when user leaves
+        if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+          remoteVideoRef.current.requestPictureInPicture().catch(() => {});
+        }
+      }
+    };
+
+    const handlePipExit = () => {
+      // When PiP closes and page is visible, do nothing (already back)
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.addEventListener('leavepictureinpicture', handlePipExit);
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.removeEventListener('leavepictureinpicture', handlePipExit);
+      }
+      // Exit PiP on component unmount
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture().catch(() => {});
+      }
+    };
+  }, [hasRemoteStream]);
 
   const formatTimer = (seconds) => {
     const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
