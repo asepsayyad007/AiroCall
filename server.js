@@ -9,7 +9,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || null;
-let ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'airocall-admin-2026'; // Set in production .env
 
 const app = express();
 
@@ -490,19 +489,10 @@ function broadcastToRoom(roomClients, sender, data) {
   });
 }
 
-// ─── ADMIN API (protected by token) ───
-// Access: admin.call.bootstrapx007.online or /api/admin/* with Authorization header
-
-function adminAuth(req, res, next) {
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  if (token !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
+// ─── ADMIN API (protected by Cloudflare Zero Trust at reverse proxy level) ───
 
 // Admin: Server overview
-app.get('/api/admin/status', adminAuth, (req, res) => {
+app.get('/api/admin/status', (req, res) => {
   const memoryUsage = process.memoryUsage();
   res.json({
     status: 'online',
@@ -526,7 +516,7 @@ app.get('/api/admin/status', adminAuth, (req, res) => {
 });
 
 // Admin: Active calls with connection details
-app.get('/api/admin/calls', adminAuth, (req, res) => {
+app.get('/api/admin/calls', (req, res) => {
   const callsList = [];
   for (const [callId, clients] of calls.entries()) {
     const participants = Array.from(clients).map((c) => ({
@@ -542,7 +532,7 @@ app.get('/api/admin/calls', adminAuth, (req, res) => {
 });
 
 // Admin: Active WebSocket connections
-app.get('/api/admin/connections', adminAuth, (req, res) => {
+app.get('/api/admin/connections', (req, res) => {
   const connections = [];
   wss.clients.forEach((ws) => {
     connections.push({
@@ -559,7 +549,7 @@ app.get('/api/admin/connections', adminAuth, (req, res) => {
 });
 
 // Admin: Rate limit & throttle status
-app.get('/api/admin/security', adminAuth, (req, res) => {
+app.get('/api/admin/security', (req, res) => {
   const rateLimits = [];
   for (const [ip, entry] of rateLimitMap.entries()) {
     rateLimits.push({ ip, count: entry.count, resetsAt: new Date(entry.resetTime).toISOString() });
@@ -586,18 +576,7 @@ function logAccess(action, details) {
   }
 }
 
-// Admin: Change token
-app.post('/api/admin/change-token', adminAuth, (req, res) => {
-  const { newToken } = req.body || {};
-  if (!newToken || typeof newToken !== 'string' || newToken.length < 8) {
-    return res.status(400).json({ error: 'Token must be at least 8 characters' });
-  }
-  ADMIN_TOKEN = newToken;
-  logAccess('token-changed', { ip: req.ip });
-  res.json({ success: true, message: 'Admin token updated. Use new token for next login.' });
-});
-
-app.get('/api/admin/logs', adminAuth, (req, res) => {
+app.get('/api/admin/logs', (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
   res.json({ total: accessLog.length, logs: accessLog.slice(-limit).reverse() });
 });
