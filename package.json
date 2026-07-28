@@ -1,6 +1,6 @@
 {
   "name": "airocall",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Ultra-lightweight WebRTC video calling with Smart TV streaming, optimized for low-resource VPS deployment",
   "author": "",
   "license": "MIT",

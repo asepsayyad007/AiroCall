@@ -38,12 +38,13 @@ app.use((req, res, next) => {
   // Content Security Policy
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://www.gstatic.com",
+    "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.youtube.com https://s.ytimg.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "connect-src 'self' wss: ws: https://stun.l.google.com https://global.stun.twilio.com",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: https://img.youtube.com https://i.ytimg.com",
     "media-src 'self' blob:",
+    "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

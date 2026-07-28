@@ -649,41 +649,45 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
       {/* ─── Main Video Area ─── */}
       <div style={{ position: 'relative', width: '100%', height: '100%', flex: 1, background: '#000', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Watch Together: Split Layout */}
-        {watchVideoId ? (
-          <>
-            {/* YouTube Player — top 60% */}
-            <div style={{ flex: 3, position: 'relative', minHeight: 0 }}>
-              <YouTubePlayer
-                videoId={watchVideoId}
-                isHost={isWatchHost.current}
-                onSyncEvent={handleWatchSyncEvent}
-                syncState={watchSyncState}
-              />
-              {/* Stop button */}
-              <button
-                onClick={handleStopWatch}
-                style={{
-                  position: 'absolute', top: '10px', right: '10px', zIndex: 5,
-                  display: 'flex', alignItems: 'center', gap: '6px',
-                  padding: '6px 12px', fontSize: '0.72rem', fontWeight: 600,
-                  background: 'rgba(239, 68, 68, 0.85)', color: '#fff',
-                  border: 'none', borderRadius: 'var(--radius-full)', cursor: 'pointer',
-                  backdropFilter: 'blur(8px)',
-                }}
-              >
-                <Square size={12} /> Stop
-              </button>
-            </div>
-            {/* Remote Video — bottom 40% */}
-            <div style={{ flex: 2, position: 'relative', minHeight: 0, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-              <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-            </div>
-          </>
-        ) : (
-          /* Normal: Full remote video */
-          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        {/* Remote Video — always rendered, positioned based on mode */}
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          style={{
+            position: watchVideoId ? 'absolute' : 'relative',
+            width: watchVideoId ? '100%' : '100%',
+            height: watchVideoId ? '40%' : '100%',
+            bottom: watchVideoId ? '0' : 'auto',
+            left: 0,
+            objectFit: 'contain',
+            zIndex: 1,
+            borderTop: watchVideoId ? '1px solid rgba(255,255,255,0.08)' : 'none',
+          }}
+        />
+
+        {/* Watch Together: YouTube Player — top section */}
+        {watchVideoId && (
+          <div style={{ position: 'relative', width: '100%', height: '60%', zIndex: 2 }}>
+            <YouTubePlayer
+              videoId={watchVideoId}
+              isHost={isWatchHost.current}
+              onSyncEvent={handleWatchSyncEvent}
+              syncState={watchSyncState}
+            />
+            <button
+              onClick={handleStopWatch}
+              style={{
+                position: 'absolute', top: '10px', right: '10px', zIndex: 5,
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', fontSize: '0.72rem', fontWeight: 600,
+                background: 'rgba(239, 68, 68, 0.85)', color: '#fff',
+                border: 'none', borderRadius: 'var(--radius-full)', cursor: 'pointer',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <Square size={12} /> Stop
+            </button>
           </div>
         )}
 
@@ -794,11 +798,11 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
         position: 'absolute', bottom: '28px', left: '50%', transform: 'translateX(-50%)', zIndex: 50,
         display: 'flex', alignItems: 'center', gap: '14px',
         padding: '16px 28px',
-        background: 'rgba(20, 18, 28, 0.82)',
-        backdropFilter: 'blur(16px) saturate(140%)', WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+        background: 'rgba(30, 28, 40, 0.55)',
+        backdropFilter: 'blur(24px) saturate(150%)', WebkitBackdropFilter: 'blur(24px) saturate(150%)',
         borderRadius: 'var(--radius-full)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
       }}>
 
           {/* Mic Toggle */}
