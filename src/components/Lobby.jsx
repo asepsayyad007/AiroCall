@@ -1,10 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Video, Mic, MicOff, Camera, CameraOff, PhoneCall, ArrowRight, Shield, Sparkles } from 'lucide-react';
 
 export default function Lobby({ targetCallId, onStartInstantCall, onJoinCall }) {
   const [userNameInput, setUserNameInput] = useState('');
   const [micEnabled, setMicEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
+  const [hostName, setHostName] = useState(null);
+
+  // Fetch host name when joining via invite link
+  useEffect(() => {
+    if (targetCallId) {
+      fetch(`/api/call/${encodeURIComponent(targetCallId)}/host`)
+        .then((r) => r.json())
+        .then((data) => { if (data.hostName) setHostName(data.hostName); })
+        .catch(() => {});
+    }
+  }, [targetCallId]);
 
   const handleStart = (e) => {
     e.preventDefault();
@@ -42,10 +53,10 @@ export default function Lobby({ targetCallId, onStartInstantCall, onJoinCall }) 
           {targetCallId && (
             <div className="animate-slide-down" style={{ background: 'var(--brand-primary-muted)', border: '1px solid rgba(255, 92, 0, 0.25)', padding: '14px 18px', borderRadius: 'var(--radius-md)', marginBottom: '24px', textAlign: 'center' }}>
               <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
-                Incoming Call Invite
+                {hostName ? `Invite from ${hostName}` : 'Incoming Call Invite'}
               </span>
-              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--brand-primary-hover)', fontFamily: 'var(--font-mono)', marginTop: '4px' }}>
-                {targetCallId}
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--brand-primary-hover)', marginTop: '4px' }}>
+                Tap below to join the call
               </div>
             </div>
           )}

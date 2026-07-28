@@ -812,7 +812,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             aria-label={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
             title={micEnabled ? 'Mute' : 'Unmute'}
           >
-            {micEnabled ? <Mic size={22} /> : <MicOff size={22} />}
+            {micEnabled ? <Mic size={24} /> : <MicOff size={24} />}
           </button>
 
           {/* Camera Toggle */}
@@ -822,7 +822,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             aria-label={videoEnabled ? 'Turn camera off' : 'Turn camera on'}
             title={videoEnabled ? 'Camera Off' : 'Camera On'}
           >
-            {videoEnabled ? <Camera size={22} /> : <CameraOff size={22} />}
+            {videoEnabled ? <Camera size={24} /> : <CameraOff size={24} />}
           </button>
 
           {/* Switch Camera */}
@@ -832,7 +832,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             aria-label="Switch camera"
             title="Switch Camera"
           >
-            <SwitchCamera size={22} />
+            <SwitchCamera size={24} />
           </button>
 
           {/* TV Stream */}
@@ -842,7 +842,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             aria-label="Stream to TV"
             title="Stream to TV"
           >
-            <Tv size={22} />
+            <Tv size={24} />
           </button>
 
           {/* Watch Together */}
@@ -853,7 +853,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             title={watchVideoId ? 'Stop Watching' : 'Watch Together'}
             style={watchVideoId ? { background: '#ef4444', borderColor: '#ef4444' } : {}}
           >
-            <Youtube size={22} />
+            <Youtube size={24} />
           </button>
 
           {/* End Call */}
@@ -863,7 +863,7 @@ export default function VideoCall({ callId, callerLabel = 'Caller 1', ws, onLeav
             aria-label="End call"
             title="End Call"
           >
-            <PhoneOff size={22} />
+            <PhoneOff size={24} />
           </button>
 
       </div>

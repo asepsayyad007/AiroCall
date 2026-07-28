@@ -201,6 +201,16 @@ const cleanupTimer = setInterval(() => {
   }
 }, 30000);
 
+// ─── API: Get call host name (for invite lobby) ───
+app.get('/api/call/:callId/host', (req, res) => {
+  const roomClients = calls.get(req.params.callId);
+  if (!roomClients) {
+    return res.json({ hostName: null });
+  }
+  const host = Array.from(roomClients).find((c) => c.role === 'caller');
+  res.json({ hostName: host?.userName || null });
+});
+
 // ─── API Health Check ───
 app.get('/api/health', (req, res) => {
   const memoryUsage = process.memoryUsage();
@@ -254,6 +264,7 @@ wss.on('connection', (ws, req) => {
           const roomClients = new Set();
           ws.role = 'caller';
           ws.callId = newCallId;
+          ws.userName = payload?.userName || 'Someone';
           roomClients.add(ws);
           calls.set(newCallId, roomClients);
 
