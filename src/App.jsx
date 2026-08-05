@@ -38,6 +38,12 @@ export default function App() {
 
       socket.onopen = () => {
         reconnectAttemptsRef.current = 0;
+        // App-level keep-alive ping to prevent proxy idle timeouts
+        window.activePingTimer = setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 20000);
       };
 
       socket.onmessage = (event) => {
@@ -52,6 +58,7 @@ export default function App() {
       };
 
       socket.onclose = (event) => {
+        if (window.activePingTimer) clearInterval(window.activePingTimer);
         // Don't reconnect if close was intentional
         if (event.code === 1000) return;
 
@@ -69,6 +76,7 @@ export default function App() {
     connect();
 
     return () => {
+      if (window.activePingTimer) clearInterval(window.activePingTimer);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.close(1000);

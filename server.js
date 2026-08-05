@@ -38,14 +38,12 @@ app.use((req, res, next) => {
   // Content Security Policy
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.youtube.com https://s.ytimg.com",
+    "script-src 'self' 'unsafe-inline' https://www.gstatic.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "connect-src 'self' wss: ws: https://stun.l.google.com https://global.stun.twilio.com",
-    "img-src 'self' data: blob: https://img.youtube.com https://i.ytimg.com",
+    "img-src 'self' data: blob:",
     "media-src 'self' blob:",
-    "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
-    "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
   ].join('; '));
@@ -454,21 +452,6 @@ wss.on('connection', (ws, req) => {
 
         case 'ping': {
           safeSend(ws, { type: 'pong' });
-          break;
-        }
-
-        case 'watch-sync': {
-          // Relay Watch Together events (play, pause, seek, start, stop) to all in room
-          const roomClients = calls.get(targetCallId);
-          if (roomClients) {
-            broadcastToRoom(roomClients, ws, {
-              type: 'watch-sync',
-              action: payload.action,
-              videoId: payload.videoId,
-              time: payload.time,
-              senderId: ws.id,
-            });
-          }
           break;
         }
 
